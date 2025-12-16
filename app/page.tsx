@@ -3,8 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  Bar, XAxis, Tooltip, ResponsiveContainer, 
-  ComposedChart, Scatter, YAxis, CartesianGrid, Cell
+  BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, YAxis, CartesianGrid
 } from 'recharts';
 import Link from 'next/link';
 import { Plane, Calendar, Clock, Map, Plus } from 'lucide-react';
@@ -65,14 +64,11 @@ export default function Home() {
       months.push({
         name: d.toLocaleString('default', { month: 'short' }),
         key: `${d.getFullYear()}-${d.getMonth()}`,
-        // These will be filled below
-        barValue: 0,
-        scatterPoints: [] as any[]
+        value: 0,
+        flightsDetail: [] as any[] // Store specific flight info here
       });
     }
 
-    let yLimit = 4;
-    
     // 2. Populate Data
     months.forEach((m) => {
       const monthFlights = flights.filter(f => {
@@ -81,42 +77,67 @@ export default function Home() {
       });
 
       if (graphMode === 'flights') {
-        // FLIGHTS MODE: We prepare a list of dots for this specific month
-        // We calculate the Y-Limit based on the busiest month
-        if (monthFlights.length + 1 > yLimit) yLimit = monthFlights.length + 1;
-
-        monthFlights.forEach((f, index) => {
-           const originIsZA = isSouthAfrican(f.origin);
-           const destIsZA = isSouthAfrican(f.destination);
-           const isLocal = originIsZA && destIsZA;
-
-           m.scatterPoints.push({
-               x: m.name,
-               y: index + 1, // Stack height
-               fill: isLocal ? '#22c55e' : '#f97316',
-               tooltip: `${f.origin} ➝ ${f.destination}`
-           });
+        // FLIGHTS: value = count, but we also save the details for the custom renderer
+        m.value = monthFlights.length;
+        m.flightsDetail = monthFlights.map(f => {
+            const originIsZA = isSouthAfrican(f.origin);
+            const destIsZA = isSouthAfrican(f.destination);
+            return {
+                id: f.id,
+                route: `${f.origin} ➝ ${f.destination}`,
+                isLocal: originIsZA && destIsZA
+            };
         });
-        // Important: Set barValue to something tiny so the bar exists (ghost bar) but is invisible
-        m.barValue = 0.1; 
-
       } else {
-        // KM or TIME MODE
-        let val = 0;
-        if (graphMode === 'km') val = monthFlights.reduce((a, c) => a + (c.distance_km || 0), 0);
-        if (graphMode === 'time') val = Math.floor(monthFlights.reduce((a, c) => a + (c.duration_min || 0), 0) / 60);
-        m.barValue = val;
+        // KM or TIME
+        if (graphMode === 'km') m.value = monthFlights.reduce((a, c) => a + (c.distance_km || 0), 0);
+        if (graphMode === 'time') m.value = Math.floor(monthFlights.reduce((a, c) => a + (c.duration_min || 0), 0) / 60);
       }
     });
 
-    // Flatten scatter data for the Scatter component
-    const flatScatterData = months.flatMap(m => m.scatterPoints);
-    const yTicks = Array.from({length: yLimit + 1}, (_, i) => i);
-
-    return { chartData: months, flatScatterData, yLimit, yTicks };
+    return months;
   };
 
-  const { chartData, flatScatterData, yLimit, yTicks } = getGraphData();
+  const graphData = getGraphData();
+
+  // --- CUSTOM DOT RENDERER (The "Stack of Dots" Trick) ---
+  const CustomBar = (props: any) => {
+    const { x, y, width, height, payload } = props;
+    
+    // If not in flights mode, or no flights, render nothing (standard bar handles it)
+    if (graphMode !== 'flights' || payload.value === 0) {
+        return <path d={`M${x},${y + height} L${x + width},${y + height} L${x + width},${y} L${x},${y} Z`} fill="#3b82f6" />;
+    }
+
+    // Draw a circle for each flight in this month
+    return (
+      <g>
+        {payload.flightsDetail.map((flight: any, index: number) => {
+            const isLocal = flight.isLocal;
+            // Stack them upwards from the bottom of the chart
+            // Note: In SVG, y=0 is the top. We need to calculate position from the bottom axis line.
+            // The "y" prop passed to us is the Top of the bar. 
+            // We want to start drawing from the bottom (which is y + height) and go up.
+            
+            // Recharts passes 'height' as the bar height. 
+            // The bottom line of the chart is at (y + height).
+            // We want to stack dots starting at (y + height - padding).
+            
+            const dotY = (y + height) - (index * 15) - 10; // 15px spacing
+            
+            return (
+                <circle 
+                    key={flight.id} 
+                    cx={x + width / 2} 
+                    cy={dotY} 
+                    r={5} 
+                    fill={isLocal ? '#22c55e' : '#f97316'} 
+                />
+            );
+        })}
+      </g>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24">
@@ -153,59 +174,40 @@ export default function Home() {
           </div>
         </div>
 
-        {/* FORCE HEIGHT HERE to prevent collapse */}
+        {/* Set explicit height to prevent collapse */}
         <div style={{ width: '100%', height: '300px' }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={true} stroke="#f3f4f6" />
+            <BarChart data={graphData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                 
                 <XAxis 
                     dataKey="name" 
-                    scale="band" 
-                    padding={{ left: 10, right: 10 }}
                     fontSize={10} 
                     axisLine={false} 
                     tickLine={false} 
                     tick={{fill: '#9ca3af'}} 
                 />
 
-                {graphMode === 'flights' ? (
-                   <YAxis 
-                        type="number" 
-                        domain={[0, yLimit]} 
-                        ticks={yTicks}
-                        fontSize={10} 
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={{fill: '#9ca3af'}} 
-                   />
-                ) : (
-                   <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
-                )}
-                
-                <Tooltip cursor={{fill: '#f9fafb', opacity: 0.5}} content={<CustomTooltip />} />
-
-                {/* THE BARS (Ghost or Real) */}
-                <Bar 
-                    dataKey="barValue" 
-                    isAnimationActive={false} // Disable animation to fix flickering
-                    fill={graphMode === 'flights' ? 'transparent' : '#3b82f6'} 
-                    radius={[4, 4, 0, 0]}
+                <YAxis 
+                    fontSize={10} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#9ca3af'}} 
+                    // Force integers only for flight count
+                    allowDecimals={graphMode !== 'flights'}
                 />
+                
+                <Tooltip cursor={{fill: '#f9fafb', opacity: 0.5}} content={<CustomTooltip mode={graphMode} />} />
 
-                {/* THE DOTS */}
-                {graphMode === 'flights' && (
-                    <Scatter 
-                        data={flatScatterData} 
-                        isAnimationActive={false} // Disable animation
-                    >
-                        {flatScatterData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.fill} />
-                        ))}
-                    </Scatter>
-                )}
-
-            </ComposedChart>
+                {/* THE MAGIC BAR */}
+                <Bar 
+                    dataKey="value" 
+                    shape={graphMode === 'flights' ? <CustomBar /> : undefined}
+                    fill="#3b82f6" 
+                    radius={[4, 4, 0, 0]}
+                    isAnimationActive={false} // No flash
+                />
+            </BarChart>
           </ResponsiveContainer>
         </div>
         
@@ -239,34 +241,32 @@ function StatCard({ icon, label, value, sub, unit }: any) {
   );
 }
 
-const CustomTooltip = ({ active, payload }: any) => {
+const CustomTooltip = ({ active, payload, mode }: any) => {
   if (active && payload && payload.length) {
-    // When hovering over the "Ghost Bar", we might get bar data. 
-    // We want to ignore that if we are in flights mode.
+    const data = payload[0].payload;
     
-    // Check if we are hovering a Scatter point
-    const scatterPoint = payload.find((p: any) => p.dataKey === undefined); // Scatter points often have undefined dataKey in this context or carry 'x'/'y' payload
-    
-    // If we have a scatter point payload (it usually carries the 'tooltip' prop we passed)
-    if (scatterPoint && scatterPoint.payload.tooltip) {
+    if (mode === 'flights' && data.flightsDetail && data.flightsDetail.length > 0) {
+        // Show list of flights in that month
         return (
-            <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
-                <div className="font-bold">{scatterPoint.payload.tooltip}</div>
-                <div className="opacity-75">{scatterPoint.payload.x}</div>
+            <div className="bg-gray-900 text-white text-xs p-3 rounded shadow-xl z-50">
+                <div className="font-bold mb-2 text-gray-400 border-b border-gray-700 pb-1">{data.name}</div>
+                {data.flightsDetail.map((f: any, i: number) => (
+                    <div key={i} className="mb-1 flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${f.isLocal ? 'bg-green-500' : 'bg-orange-500'}`}></div>
+                        {f.route}
+                    </div>
+                ))}
             </div>
         );
     }
     
-    // Fallback for Bar Chart (KM/Time)
-    // We check if value > 1 (since we set ghost bar to 0.1)
-    if (payload[0].value > 1) {
-        return (
-            <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
-                <div className="font-bold">{payload[0].value}</div>
-                <div className="opacity-75">{payload[0].payload.name}</div>
-            </div>
-        );
-    }
+    // Standard tooltip
+    return (
+        <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
+            <div className="font-bold">{payload[0].value}</div>
+            <div className="opacity-75">{data.name}</div>
+        </div>
+    );
   }
   return null;
 };
