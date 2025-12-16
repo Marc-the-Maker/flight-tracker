@@ -1,45 +1,77 @@
 import { NextResponse } from 'next/server';
 
+// Helper to fetch and find the ICAO code
+async function getIcaoCode(iata: string) {
+  try {
+    // We use a free, public list of airline codes
+    const res = await fetch('https://raw.githubusercontent.com/nprail/airline-codes/master/airlines.json');
+    if (!res.ok) return null;
+    
+    const airlines = await res.json();
+    // Find the airline where "iata" matches our input (e.g., "FA")
+    // active: "Y" ensures we don't pick a defunct airline
+    const airline = airlines.find((a: any) => a.iata === iata && a.active === "Y");
+    
+    return airline ? airline.icao : null;
+  } catch (e) {
+    console.error("Airline DB lookup failed", e);
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const ident = searchParams.get('ident');
+  let ident = searchParams.get('ident')?.toUpperCase(); // e.g. "FA600"
 
-  console.log(`🔍 [API] Searching for flight: ${ident}`); // LOG 1
+  console.log(`🔍 [API] Input: ${ident}`);
 
   if (!ident) return NextResponse.json({ error: 'No ident' }, { status: 400 });
 
   const apiKey = process.env.FLIGHTAWARE_API_KEY;
-  if (!apiKey) {
-    console.error("❌ [API] API Key is MISSING in environment variables!"); // LOG 2
-    return NextResponse.json({ error: 'Server config error' }, { status: 500 });
-  }
+  if (!apiKey) return NextResponse.json({ error: 'Server config error' }, { status: 500 });
 
   try {
-    const url = `https://aeroapi.flightaware.com/aeroapi/flights/${ident}?max_pages=1`;
-    console.log(`📡 [API] Fetching: ${url}`); // LOG 3
+    // --- STEP 1: AUTO-CORRECT IATA TO ICAO ---
+    // Regex to split "FA" from "600"
+    const match = ident.match(/^([A-Z]{2})([0-9]+)$/); 
+    
+    if (match) {
+      const iataCode = match[1]; // "FA"
+      const flightNum = match[2]; // "600"
+      
+      console.log(`⚠️ [API] Detected IATA code: ${iataCode}. Attempting convert...`);
+      
+      const icaoCode = await getIcaoCode(iataCode); // Returns "SFR"
+      
+      if (icaoCode) {
+        ident = `${icaoCode}${flightNum}`; // Becomes "SFR600"
+        console.log(`✨ [API] Converted to ICAO: ${ident}`);
+      } else {
+        console.log(`❌ [API] Could not find ICAO for ${iataCode}, sticking with original.`);
+      }
+    }
 
+    // --- STEP 2: CALL FLIGHTAWARE ---
+    const url = `https://aeroapi.flightaware.com/aeroapi/flights/${ident}?max_pages=1`;
+    
     const res = await fetch(url, {
       headers: { 'x-apikey': apiKey }
     });
 
-    console.log(`STATUS: ${res.status}`); // LOG 4
-
     if (!res.ok) {
-        const errText = await res.text();
-        console.error(`❌ [API] Error from FlightAware: ${errText}`); // LOG 5
+        console.error(`❌ [API] Provider Error: ${res.status}`);
         return NextResponse.json({ error: 'Provider Error' }, { status: res.status });
     }
 
     const data = await res.json();
-    console.log(`✅ [API] Flights found: ${data.flights?.length || 0}`); // LOG 6
-
     const flights = data.flights;
 
     if (!flights || flights.length === 0) {
+      console.log(`❌ [API] Still 0 flights found for ${ident}`);
       return NextResponse.json({ error: 'Flight not found' }, { status: 404 });
     }
 
-    // Logic to find the correct flight leg
+    // --- STEP 3: EXTRACT DATA ---
     const lastFlight = flights.find((f: any) => f.actual_off) || flights[0];
 
     const payload = {
@@ -52,7 +84,7 @@ export async function GET(request: Request) {
       departure_date: lastFlight.scheduled_off.split('T')[0]
     };
     
-    console.log("📦 [API] Sending payload:", payload);
+    console.log("✅ [API] Success:", payload);
     return NextResponse.json(payload);
 
   } catch (error) {
