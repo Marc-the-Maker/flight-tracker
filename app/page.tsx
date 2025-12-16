@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
   BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, 
-  ScatterChart, Scatter, YAxis 
+  ComposedChart, Scatter, YAxis, CartesianGrid, ZAxis
 } from 'recharts';
 import Link from 'next/link';
 import { Plane, Calendar, Clock, Map, Plus } from 'lucide-react';
@@ -30,24 +30,16 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // --- HELPER: ROBUST LOCAL CHECK ---
+  // --- HELPER: LOCAL CHECK ---
   const isSouthAfrican = (code: string) => {
-    // 1. Find airport in DB
     const airport = airportDb.find((a: any) => a.iata === code || a.icao === code);
-    
     if (airport) {
-      // Check Country Name (Handles "South Africa", "Republic of South Africa", etc)
       const country = airport.country?.toLowerCase() || "";
       if (country.includes("south africa")) return true;
-      
-      // Check ICAO Code (South African airports start with FA..)
       if (airport.icao?.startsWith("FA")) return true;
     }
-    
-    // 2. Fallback: If DB lookup failed, check known major codes directly
     const localCodes = ['JNB', 'CPT', 'DUR', 'HLA', 'GRJ', 'PLZ', 'ELS', 'KIM', 'BFN', 'MQP', 'PTG', 'UTH', 'RCB', 'PBZ', 'LNO', 'PHW', 'NTY', 'SIS', 'ZEC'];
     if (localCodes.includes(code)) return true;
-
     return false;
   };
 
@@ -64,22 +56,25 @@ export default function Home() {
     timeYTD: ytdFlights.reduce((a, c) => a + (c.duration_min || 0), 0),
   };
 
-  // --- GRAPH DATA ---
+  // --- GRAPH DATA ENGINE ---
   const getGraphData = () => {
     const today = new Date();
     const months = [];
     
+    // 1. Create the skeleton (Last 12 Months)
+    // We reverse it so the current month is on the far right
     for (let i = 11; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       months.push({
-        name: d.toLocaleString('default', { month: 'short' }),
-        key: `${d.getFullYear()}-${d.getMonth()}`,
+        name: d.toLocaleString('default', { month: 'short' }), // e.g., "Aug"
+        key: `${d.getFullYear()}-${d.getMonth()}`, // e.g., "2024-7"
       });
     }
 
+    // 2. Map data to the skeleton
     if (graphMode === 'flights') {
-      // --- SCATTER CHART (DOTS) ---
       const scatterPoints: any[] = [];
+      let maxFlightsInMonth = 0;
       
       months.forEach((m) => {
         const monthFlights = flights.filter(f => {
@@ -87,27 +82,37 @@ export default function Home() {
           return `${fd.getFullYear()}-${fd.getMonth()}` === m.key;
         });
 
+        // Track max for Y-Axis scaling
+        if (monthFlights.length > maxFlightsInMonth) maxFlightsInMonth = monthFlights.length;
+
         monthFlights.forEach((f, stackIndex) => {
-          // Check if Local (Starts AND Ends in ZA)
           const originIsZA = isSouthAfrican(f.origin);
           const destIsZA = isSouthAfrican(f.destination);
-          
           const isLocal = originIsZA && destIsZA;
 
           scatterPoints.push({
-            x: m.name,
-            y: stackIndex + 1,
-            z: 1,
-            fill: isLocal ? '#22c55e' : '#f97316', // Green (Local) vs Orange (Intl)
+            x: m.name,       // Must match the 'name' in the months array
+            y: stackIndex + 1, // Stack height (1, 2, 3...)
+            z: 1,            
+            fill: isLocal ? '#22c55e' : '#f97316',
             tooltip: `${f.origin} ➝ ${f.destination}`
           });
         });
       });
-      return scatterPoints;
+
+      // Calculate Y-Axis Limit (Min 4, or higher if needed)
+      const yLimit = Math.max(4, maxFlightsInMonth + 1);
+      
+      return { 
+        xAxisData: months, // The 12 empty columns
+        scatterData: scatterPoints, // The actual dots
+        yLimit, 
+        yTicks: Array.from({length: yLimit + 1}, (_, i) => i) // [0, 1, 2, 3, 4...]
+      };
 
     } else {
-      // --- BAR CHART (KM / TIME) ---
-      return months.map(m => {
+      // Bar Chart Data (Simple mapping)
+      const barData = months.map(m => {
         const monthFlights = flights.filter(f => {
           const fd = new Date(f.date);
           return `${fd.getFullYear()}-${fd.getMonth()}` === m.key;
@@ -119,10 +124,11 @@ export default function Home() {
 
         return { name: m.name, value: val };
       });
+      return { xAxisData: barData, scatterData: [], yLimit: 0, yTicks: [] };
     }
   };
 
-  const graphData = getGraphData();
+  const { xAxisData, scatterData, yLimit, yTicks } = getGraphData();
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24">
@@ -162,15 +168,35 @@ export default function Home() {
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
             {graphMode === 'flights' ? (
-              <ScatterChart margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
-                <XAxis type="category" dataKey="x" interval={0} tick={{fontSize: 10}} axisLine={false} tickLine={false} />
-                <YAxis type="number" dataKey="y" hide domain={[0, 'auto']} />
+              // COMPOSED CHART Allows combining X-Axis Categories with Scatter Dots
+              <ComposedChart data={xAxisData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={true} stroke="#f0f0f0" />
+                
+                {/* 1. X-Axis: Always shows all 12 months */}
+                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
+                
+                {/* 2. Y-Axis: Integer ticks only (0, 1, 2, 3, 4...) */}
+                <YAxis 
+                    type="number" 
+                    domain={[0, yLimit]} 
+                    ticks={yTicks}
+                    fontSize={10} 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{fill: '#9ca3af'}} 
+                />
+                
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<CustomTooltip />} />
-                <Scatter data={graphData} line={false} />
-              </ScatterChart>
+                
+                {/* 3. The Dots (Scatter) */}
+                <Scatter name="Flights" data={scatterData} fill="#8884d8" />
+              </ComposedChart>
             ) : (
-              <BarChart data={graphData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
-                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} />
+              // Standard Bar Chart for KM / Time
+              <BarChart data={xAxisData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
+                <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
                 <Tooltip cursor={{fill: '#f3f4f6'}} />
                 <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -178,7 +204,7 @@ export default function Home() {
           </ResponsiveContainer>
         </div>
         
-        {/* LEGEND - UPDATED TO 'LOCAL' */}
+        {/* LEGEND */}
         {graphMode === 'flights' && (
            <div className="flex justify-center gap-4 mt-4 text-xs font-semibold text-gray-500">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500"></div> Local (ZA)</div>
@@ -212,12 +238,24 @@ function StatCard({ icon, label, value, sub, unit }: any) {
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
-    return (
-      <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
-        <div className="font-bold">{data.tooltip}</div>
-        <div className="opacity-75">{data.x}</div>
-      </div>
-    );
+    // Handle distinct tooltips for Bar vs Scatter
+    if (data.tooltip) {
+        // Scatter Tooltip
+        return (
+        <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
+            <div className="font-bold">{data.tooltip}</div>
+            <div className="opacity-75">{data.x}</div>
+        </div>
+        );
+    } else {
+        // Bar Tooltip
+        return (
+            <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
+                <div className="font-bold">{payload[0].value}</div>
+                <div className="opacity-75">{data.name}</div>
+            </div>
+        );
+    }
   }
   return null;
 };
