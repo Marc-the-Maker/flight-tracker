@@ -9,7 +9,8 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // This line fixes the Supabase import error by forcing Next.js to bundle it correctly
+  transpilePackages: ['@supabase/supabase-js'],
 };
 
 export default withPWA(nextConfig);
