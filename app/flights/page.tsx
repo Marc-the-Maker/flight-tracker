@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
+// --- CONSTANTS ---
 const MANUAL_AIRLINE_MAP: Record<string, string> = { 
     'SFR': 'FA', 'FA': 'FA', 'SAA': 'SA', 'SA': 'SA', 'LNK': '4Z', '4Z': '4Z', 'BAW': 'BA', 'BA': 'BA', 'CAW': 'MN', 'MN': 'MN', 'KUL': 'MN' 
 };
@@ -24,13 +25,8 @@ type Leg = {
   from: any; to: any; date: string; flightNumber: string; airline: string; distance: number | ''; duration: number | ''; showManual: boolean; error?: string;
 };
 
-// We wrap the content in a Suspense boundary component because useSearchParams requires it in Next.js
-function FlightsContent() {
-  const searchParams = useSearchParams();
-  // If ?new=true exists in URL, default to 'add', otherwise 'list'
-  const initialView = searchParams.get('new') === 'true' ? 'add' : 'list';
-  
-  const [view, setView] = useState<'list' | 'add'>(initialView);
+export default function FlightsPage() {
+  const [view, setView] = useState<'list' | 'add'>('list');
   const [flights, setFlights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -49,8 +45,17 @@ function FlightsContent() {
 
   useEffect(() => {
     fetchHistory();
-    fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json').then(res => res.ok ? res.json() : []).then(data => setAirportList(Object.values(data)));
-    fetch('https://raw.githubusercontent.com/flyinactor91/airline-codes/master/airlines.json').then(res => res.ok ? res.json() : []).then(data => setAirlineList(data));
+    // Fetch Airports
+    fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setAirportList(Object.values(data)))
+      .catch(e => console.error("Airport load failed", e));
+    
+    // Fetch Airlines (FIXED URL)
+    fetch('https://raw.githubusercontent.com/npow/airline-codes/master/airlines.json')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setAirlineList(data))
+      .catch(e => console.error("Airline load failed", e));
   }, []);
 
   const fetchHistory = async () => {
@@ -58,15 +63,24 @@ function FlightsContent() {
     if (data) setFlights(data);
   };
 
+  // Helper to resolve airline IATA code (e.g. "FA")
   const resolveAirlineCode = (flightCode: string) => {
     if (!flightCode || flightCode.length < 2) return null;
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
     const prefix = match[1];
+    
+    // 1. Check Manual Map
     if (MANUAL_AIRLINE_MAP[prefix]) return MANUAL_AIRLINE_MAP[prefix];
+    
+    // 2. Check Database
     if (airlineList.length > 0) {
-        const airline = airlineList.find((a: any) => a.icao === prefix || a.iata === prefix);
-        if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) {
+        // Robust check for active airlines (handles 'Y' string or boolean true)
+        const airline = airlineList.find((a: any) => 
+            (a.icao === prefix || a.iata === prefix) && 
+            (a.active === "Y" || a.active === true)
+        );
+        if (airline && airline.iata && airline.iata !== '-') {
             return airline.iata;
         }
     }
@@ -74,13 +88,9 @@ function FlightsContent() {
   };
 
   const getAirlineLogoUrl = (flightCode: string, savedAirline: string | null) => {
-    // 1. If we have a saved airline in DB, use it immediately
-    if (savedAirline) return `https://pics.avs.io/200/200/${savedAirline}.png`;
-    
-    // 2. Fallback: Try to calculate it on the fly (for old entries)
-    const calculated = resolveAirlineCode(flightCode);
-    if (calculated) return `https://pics.avs.io/200/200/${calculated}.png`;
-    
+    // Use saved code if available, otherwise resolve it
+    const code = savedAirline || resolveAirlineCode(flightCode);
+    if (code) return `https://pics.avs.io/200/200/${code}.png`;
     return null;
   };
 
@@ -120,6 +130,9 @@ function FlightsContent() {
         let originObj = leg.from;
         let destObj = leg.to;
 
+        // Auto-sanitize flight number (remove spaces)
+        if (leg.flightNumber) leg.flightNumber = leg.flightNumber.replace(/\s/g, '');
+
         if (leg.flightNumber && leg.flightNumber.length > 2) {
             setLoadingMessage(`Looking up ${leg.flightNumber}...`);
             try {
@@ -141,14 +154,23 @@ function FlightsContent() {
              if (!finalDuration) finalDuration = Math.round((finalDistance / 800 * 60) + 30);
         }
 
-        let resolvedAirline = leg.airline; 
+        // Calculate and Save Airline Code
+        let resolvedAirline = leg.airline;
         if (!resolvedAirline && leg.flightNumber) {
             const foundCode = resolveAirlineCode(leg.flightNumber);
             if (foundCode) resolvedAirline = foundCode;
         }
 
         if (!hasError) {
-            payload.push({ date: leg.date, origin: originObj?.iata || 'UNK', destination: destObj?.iata || 'UNK', airline: resolvedAirline || null, flight_number: leg.flightNumber || null, distance_km: finalDistance || 0, duration_min: finalDuration || 0 });
+            payload.push({ 
+                date: leg.date, 
+                origin: originObj?.iata || 'UNK', 
+                destination: destObj?.iata || 'UNK', 
+                airline: resolvedAirline || null, 
+                flight_number: leg.flightNumber || null, 
+                distance_km: finalDistance || 0, 
+                duration_min: finalDuration || 0 
+            });
         }
     }
     setLegs(newLegs);
@@ -216,7 +238,6 @@ function FlightsContent() {
              const destName = destObj ? destObj.city : f.destination;
              
              // OPTIMIZED LOGO LOGIC
-             // We pass the saved 'airline' column first. If it's missing, we fallback to calculation.
              const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
 
              return (
@@ -243,14 +264,5 @@ function FlightsContent() {
        </div>
        <style jsx>{` .fallback-icon img { display: none; } .fallback-icon .fallback-plane { display: block; } `}</style>
     </div>
-  );
-}
-
-// Ensure the component is exported as default at the very bottom
-export default function FlightsPageWrapper() {
-  return (
-    <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
-      <FlightsContent />
-    </Suspense>
   );
 }
