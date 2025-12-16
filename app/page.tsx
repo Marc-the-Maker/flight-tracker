@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
-// ... (getDistanceKm function remains same) ...
+// --- MATH HELPERS ---
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -17,7 +17,6 @@ function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return Math.round(R * c);
 }
 
-// ... (Leg type remains same) ...
 type Leg = {
   from: any;
   to: any;
@@ -57,9 +56,9 @@ export default function FlightsPage() {
       .then(data => setAirportList(Object.values(data)))
       .catch(e => console.error("Airport load failed", e));
     
-    // 2. Fetch Airlines (NEW RELIABLE SOURCE)
+    // 2. Fetch Airlines (NEW WORKING URL)
     console.log("Fetching airline database...");
-    fetch('https://raw.githubusercontent.com/jbrooksuk/JSON-Airports/main/airlines.json')
+    fetch('https://raw.githubusercontent.com/flyinactor91/airline-codes/master/airlines.json')
       .then(res => res.ok ? res.json() : [])
       .then(data => {
           console.log(`Airline DB loaded: ${data.length} entries`);
@@ -76,39 +75,37 @@ export default function FlightsPage() {
   const getAirlineLogoUrl = (flightCode: string) => {
     if (!flightCode || flightCode.length < 3) return null;
     
-    // Regex to get the first letters
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
     const code = match[1]; // e.g., "SFR" or "FA"
 
-    if (airlineList.length === 0) return null;
-
-    // DEBUG: Log what we are looking for
-    // console.log(`Looking for logo for code: ${code}`);
-
-    // Flexible search: Matches IATA ("FA") or ICAO ("SFR")
-    const airline = airlineList.find((a: any) => 
-        a.iata === code || a.icao === code || a.IATA === code || a.ICAO === code
-    );
+    // 1. HARDCODED FALLBACKS (Ensure these always have logos)
+    const manualMap: Record<string, string> = {
+        'SFR': 'FA', // FlySafair
+        'FA': 'FA',
+        'SAA': 'SA', // South African Airways
+        'SA': 'SA',
+        'LNK': '4Z', // Airlink
+        '4Z': '4Z',
+        'BAW': 'BA', // British Airways
+        'BA': 'BA'
+    };
     
-    // Fallback specific for FlySafair if DB is missing it
-    if (code === 'SFR' || code === 'FA') {
-        return `https://pics.avs.io/200/200/FA.png`;
+    if (manualMap[code]) {
+        return `https://pics.avs.io/200/200/${manualMap[code]}.png`;
     }
 
-    if (airline) {
-        // Prefer IATA code for logo URL
-        const iata = airline.iata || airline.IATA;
-        if (iata && iata !== '-' && iata.length === 2) {
-            return `https://pics.avs.io/200/200/${iata}.png`;
+    // 2. Database Lookup
+    if (airlineList.length > 0) {
+        const airline = airlineList.find((a: any) => a.icao === code || a.iata === code);
+        if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) {
+            return `https://pics.avs.io/200/200/${airline.iata}.png`;
         }
     }
     return null;
   };
 
-  // ... (handleSearch, selectAirport, saveTrip - Keep exactly as before) ...
-  // Please ensure you paste the full logic for these functions here (from the previous answer)
-  // I am truncating them here for brevity but your file needs them!
+  // --- STANDARD HANDLERS ---
   const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
     setActiveSearch({ i, f });
     if (query.length > 1) {
@@ -243,7 +240,7 @@ export default function FlightsPage() {
     );
   }
 
-  // --- LIST VIEW (WITH LOGO SUPPORT) ---
+  // --- LIST VIEW ---
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-20">
        <div className="flex justify-between items-center mb-6">
@@ -264,7 +261,6 @@ export default function FlightsPage() {
              return (
                  <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
                     <div className="flex items-center gap-4">
-                       {/* Airline Logo OR Plane Fallback */}
                        <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center overflow-hidden flex-shrink-0">
                            {logoUrl ? (
                                <img 
@@ -272,7 +268,6 @@ export default function FlightsPage() {
                                  alt="Logo" 
                                  className="w-full h-full object-contain p-1"
                                  onError={(e) => {
-                                     // If image fails, hide it and show plane instead
                                      e.currentTarget.style.display = 'none';
                                      e.currentTarget.parentElement?.classList.add('fallback-icon');
                                  }}
@@ -280,18 +275,11 @@ export default function FlightsPage() {
                            ) : (
                                <Plane size={20} className="text-blue-600"/>
                            )}
-                           {/* Hidden plane icon that appears if image fails */}
                            <Plane size={20} className="text-blue-600 hidden fallback-plane"/>
                        </div>
-
                        <div>
-                          <div className="text-lg font-bold text-gray-900 leading-tight">
-                             {originName} <span className="text-gray-300">➝</span> {destName}
-                          </div>
-                          <div className="text-xs text-gray-500 flex gap-2 mt-1">
-                              <span>{new Date(f.date).toLocaleDateString()}</span>
-                              <span className="font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">{f.flight_number}</span>
-                          </div>
+                          <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
+                          <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
                        </div>
                     </div>
                     <div className="text-right">
@@ -302,12 +290,7 @@ export default function FlightsPage() {
              );
           })}
        </div>
-       
-       {/* CSS Hack for image fallback */}
-       <style jsx>{`
-         .fallback-icon img { display: none; }
-         .fallback-icon .fallback-plane { display: block; }
-       `}</style>
+       <style jsx>{` .fallback-icon img { display: none; } .fallback-icon .fallback-plane { display: block; } `}</style>
     </div>
   );
 }
