@@ -1,44 +1,55 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Trash2, Plus, Plane } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
-type Leg = { 
-  from: string; 
-  to: string; 
-  date: string; 
-  airline: string 
+// --- MATH HELPERS ---
+function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371; 
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * (Math.PI/180)) * Math.cos(lat2 * (Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return Math.round(R * c);
+}
+
+type Leg = {
+  from: any;
+  to: any;
+  date: string;
+  flightNumber: string;
+  airline: string;
+  distance: number | ''; 
+  duration: number | ''; 
+  showManual: boolean; // New toggle for hiding/showing details
+  error?: string; // To show specific errors per leg
 };
 
 export default function FlightsPage() {
-  const router = useRouter();
   const [view, setView] = useState<'list' | 'add'>('list');
   const [flights, setFlights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-
-  // Form State
+  const [loadingMessage, setLoadingMessage] = useState('');
+  const [airportList, setAirportList] = useState<any[]>([]);
   const [tripType, setTripType] = useState<'one-way' | 'return' | 'multi'>('return');
+  
   const [legs, setLegs] = useState<Leg[]>([
-    { from: '', to: '', date: new Date().toISOString().split('T')[0], airline: '' },
-    { from: '', to: '', date: new Date().toISOString().split('T')[0], airline: '' } // Default return leg
+    { from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false },
+    { from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false }
   ]);
 
-  // Autocomplete State
   const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [activeSearch, setActiveSearch] = useState<{ index: number, field: 'from' | 'to' } | null>(null);
-  const [airportList, setAirportList] = useState<any[]>([]);
+  const [activeSearch, setActiveSearch] = useState<{ i: number, f: 'from' | 'to' } | null>(null);
 
-  // Load History & Airport DB
   useEffect(() => {
     fetchHistory();
-    // Load airport database once on mount
     fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json')
       .then(res => res.json())
-      .then(data => setAirportList(Object.values(data)))
-      .catch(err => console.error("Failed to load airports", err));
+      .then(data => setAirportList(Object.values(data)));
   }, []);
 
   const fetchHistory = async () => {
@@ -46,205 +57,249 @@ export default function FlightsPage() {
     if (data) setFlights(data);
   };
 
-  // --- LOGIC HANDLERS ---
-
-  const handleTripTypeChange = (type: 'one-way' | 'return' | 'multi') => {
-    setTripType(type);
-    if (type === 'one-way') {
-      setLegs([legs[0]]); // Keep only first leg
-    } else if (type === 'return') {
-      // Ensure we have exactly 2 legs
-      setLegs([
-        legs[0], 
-        { from: legs[0].to, to: legs[0].from, date: legs[0].date, airline: '' }
-      ]);
-    }
-  };
-
-  const updateLeg = (index: number, field: keyof Leg, value: string) => {
-    const newLegs = [...legs];
-    newLegs[index][field] = value;
-
-    // Logic: If updating "To" on Leg 1 in a Return trip, update "From" on Leg 2
-    if (tripType === 'return' && index === 0 && field === 'to') {
-      if (newLegs[1]) newLegs[1].from = value;
-    }
-    // Logic: If updating "From" on Leg 1 in a Return trip, update "To" on Leg 2
-    if (tripType === 'return' && index === 0 && field === 'from') {
-        if (newLegs[1]) newLegs[1].to = value;
-    }
-
-    setLegs(newLegs);
-
-    // Trigger Search if typing airport
-    if (field === 'from' || field === 'to') {
-      if (value.length > 1) {
-        const results = airportList.filter((a: any) => 
-          a.iata.toLowerCase().includes(value.toLowerCase()) || 
-          a.city.toLowerCase().includes(value.toLowerCase())
-        ).slice(0, 5); // Limit to 5 results
-        setSuggestions(results);
-        setActiveSearch({ index, field });
-      } else {
-        setActiveSearch(null);
-      }
+  const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
+    setActiveSearch({ i, f });
+    if (query.length > 1) {
+      const res = airportList.filter((a: any) => 
+        (a.iata?.toLowerCase().includes(query.toLowerCase()) || a.city?.toLowerCase().includes(query.toLowerCase())) && a.iata
+      ).slice(0, 5);
+      setSuggestions(res);
+    } else {
+      setSuggestions([]);
     }
   };
 
   const selectAirport = (airport: any) => {
     if (!activeSearch) return;
-    updateLeg(activeSearch.index, activeSearch.field, airport.iata);
-    setActiveSearch(null); // Hide dropdown
+    const { i, f } = activeSearch;
+    const newLegs = [...legs];
+    newLegs[i][f] = airport;
+    
+    // Auto-calc distance if manual entry is used
+    if (newLegs[i].from && newLegs[i].to && !newLegs[i].distance) {
+        const dist = getDistanceKm(newLegs[i].from.lat, newLegs[i].from.lon, newLegs[i].to.lat, newLegs[i].to.lon);
+        newLegs[i].distance = dist;
+    }
+    setLegs(newLegs);
+    setActiveSearch(null);
   };
 
   const saveTrip = async () => {
     setLoading(true);
-    const flightsToSave = legs.map(leg => ({
-        date: leg.date,
-        origin: leg.from.toUpperCase(),
-        destination: leg.to.toUpperCase(),
-        airline: leg.airline || null, // Optional
-        distance_km: 0, // Placeholder for now
-        duration_min: 0 // Placeholder
-    }));
+    setLoadingMessage('Checking Flight Network...');
+    
+    const newLegs = [...legs];
+    const payload = [];
+    let hasError = false;
 
-    // Filter out empty legs
-    const validFlights = flightsToSave.filter(f => f.origin && f.destination);
+    for (let i = 0; i < newLegs.length; i++) {
+        const leg = newLegs[i];
+        
+        // Skip completely empty rows
+        if (!leg.flightNumber && !leg.from) continue;
 
-    if (validFlights.length === 0) {
-        alert("Please fill in at least one flight leg");
-        setLoading(false);
-        return;
+        let finalDuration = Number(leg.duration);
+        let finalDistance = Number(leg.distance);
+        let finalOrigin = leg.from?.iata;
+        let finalDest = leg.to?.iata;
+
+        // 1. Try API Lookup if Flight Number exists
+        if (leg.flightNumber && leg.flightNumber.length > 2) {
+            setLoadingMessage(`Looking up ${leg.flightNumber}...`);
+            try {
+                const res = await fetch(`/api/flight_lookup?ident=${leg.flightNumber}`);
+                const apiData = await res.json();
+
+                if (!apiData.error) {
+                    if (!finalOrigin) finalOrigin = apiData.origin;
+                    if (!finalDest) finalDest = apiData.destination;
+                    if (apiData.actual_duration || apiData.duration) {
+                        finalDuration = apiData.actual_duration || apiData.duration;
+                    }
+                    // Success! Clear any errors
+                    leg.error = undefined;
+                } else {
+                   // API Failed (Flight not found)
+                   if (!finalOrigin || !finalDest) {
+                       leg.error = "Flight not found. Please enter airports manually.";
+                       leg.showManual = true; // FORCE OPEN MANUAL ENTRY
+                       hasError = true;
+                   }
+                }
+            } catch (err) {
+                if (!finalOrigin || !finalDest) {
+                    leg.error = "Network error. Enter manually.";
+                    leg.showManual = true;
+                    hasError = true;
+                }
+            }
+        } else {
+            // No flight number? Check if manual entry is complete
+            if (!finalOrigin || !finalDest) {
+                leg.error = "Please enter flight number OR airports";
+                hasError = true;
+            }
+        }
+
+        // 2. Math Fallback for Distance
+        if (!finalDistance && finalOrigin && finalDest) {
+             const originObj = airportList.find(a => a.iata === finalOrigin);
+             const destObj = airportList.find(a => a.iata === finalDest);
+             if (originObj && destObj) {
+                 finalDistance = getDistanceKm(originObj.lat, originObj.lon, destObj.lat, destObj.lon);
+             }
+        }
+        
+        // 3. Math Fallback for Duration
+        if (!finalDuration && finalDistance) {
+            finalDuration = Math.round((finalDistance / 800 * 60) + 30);
+        }
+
+        if (!hasError) {
+            payload.push({
+                date: leg.date,
+                origin: finalOrigin || 'UNK',
+                destination: finalDest || 'UNK',
+                airline: leg.airline || null,
+                flight_number: leg.flightNumber || null,
+                distance_km: finalDistance || 0,
+                duration_min: finalDuration || 0
+            });
+        }
     }
 
-    const { error } = await supabase.from('flights').insert(validFlights);
+    setLegs(newLegs); // Update state to show errors/open forms if needed
 
+    if (hasError) {
+        setLoading(false);
+        return; // Stop here, let user fix it
+    }
+
+    setLoadingMessage('Saving...');
+    const { error } = await supabase.from('flights').insert(payload);
+    
     if (error) {
-        alert("Error saving: " + error.message);
+        alert("Database Error: " + error.message);
     } else {
         setView('list');
         fetchHistory();
+        // Reset form
+        setLegs([{ from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false }]);
     }
     setLoading(false);
   };
-
-  // --- RENDER ---
 
   if (view === 'add') {
     return (
       <div className="min-h-screen bg-gray-50 p-4">
         <h2 className="text-2xl font-bold mb-6 text-gray-900">Add Trip</h2>
-
-        {/* TRIP TYPE TABS */}
+        
         <div className="flex bg-gray-200 p-1 rounded-lg mb-6">
-          {(['one-way', 'return', 'multi'] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => handleTripTypeChange(t)}
-              className={`flex-1 py-2 text-sm font-semibold rounded-md capitalize ${tripType === t ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
-            >
-              {t.replace('-', ' ')}
-            </button>
+          {(['one-way', 'return', 'multi'] as const).map(t => (
+             <button key={t} onClick={() => {
+                 setTripType(t);
+                 if(t === 'one-way') setLegs([legs[0]]);
+                 else if(t === 'return') setLegs([legs[0], { ...legs[0], flightNumber: '', error: undefined }]);
+             }} className={`flex-1 py-2 text-sm font-bold capitalize rounded-md ${tripType === t ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>{t}</button>
           ))}
         </div>
 
-        {/* FLIGHT LEGS FORM */}
         <div className="space-y-4">
           {legs.map((leg, i) => (
-            <div key={i} className="bg-white p-5 rounded-xl shadow-sm relative border border-gray-100">
-              <div className="text-xs font-bold text-gray-400 mb-3 uppercase tracking-wider">Flight {i + 1}</div>
-              
-              <div className="grid grid-cols-2 gap-4 mb-4 relative">
-                {/* FROM INPUT */}
-                <div className="relative">
-                    <label className="text-xs text-gray-500 block mb-1">From</label>
-                    <input 
-                        value={leg.from}
-                        onChange={(e) => updateLeg(i, 'from', e.target.value)}
-                        placeholder="CPT"
-                        className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 font-bold text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
-                    />
-                    {/* DROPDOWN - Shows only if this specific input is active */}
-                    {activeSearch?.index === i && activeSearch?.field === 'from' && suggestions.length > 0 && (
-                        <div className="absolute z-10 top-full left-0 w-full bg-white shadow-xl rounded-lg mt-1 border border-gray-100 max-h-48 overflow-auto">
-                            {suggestions.map((s, idx) => (
-                                <div key={idx} onClick={() => selectAirport(s)} className="p-3 border-b border-gray-50 hover:bg-blue-50 cursor-pointer">
-                                    <div className="font-bold text-gray-900">{s.iata}</div>
-                                    <div className="text-xs text-gray-500">{s.city}, {s.country}</div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* TO INPUT */}
-                <div className="relative">
-                    <label className="text-xs text-gray-500 block mb-1">To</label>
-                    <input 
-                        value={leg.to}
-                        onChange={(e) => updateLeg(i, 'to', e.target.value)}
-                        placeholder="LHR"
-                        className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 font-bold text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none uppercase"
-                    />
-                    {/* DROPDOWN - Shows only if this specific input is active */}
-                    {activeSearch?.index === i && activeSearch?.field === 'to' && suggestions.length > 0 && (
-                        <div className="absolute z-10 top-full left-0 w-full bg-white shadow-xl rounded-lg mt-1 border border-gray-100 max-h-48 overflow-auto">
-                            {suggestions.map((s, idx) => (
-                                <div key={idx} onClick={() => selectAirport(s)} className="p-3 border-b border-gray-50 hover:bg-blue-50 cursor-pointer">
-                                    <div className="font-bold text-gray-900">{s.iata}</div>
-                                    <div className="text-xs text-gray-500">{s.city}, {s.country}</div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+            <div key={i} className={`bg-white p-5 rounded-xl shadow-sm border transition-all ${leg.error ? 'border-red-500 ring-1 ring-red-200' : 'border-gray-100'}`}>
+              <div className="flex justify-between items-center mb-4">
+                 <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Flight {i+1}</div>
+                 {leg.error && <div className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12}/> {leg.error}</div>}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="text-xs text-gray-500 block mb-1">Date</label>
-                    <input 
-                        type="date"
-                        value={leg.date}
-                        onChange={(e) => updateLeg(i, 'date', e.target.value)}
-                        className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-gray-900 text-sm"
-                    />
-                </div>
-                <div>
-                    <label className="text-xs text-gray-500 block mb-1">Airline (Optional)</label>
-                    <input 
-                        value={leg.airline}
-                        onChange={(e) => updateLeg(i, 'airline', e.target.value)}
-                        placeholder="Emirates"
-                        className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-gray-900 text-sm"
-                    />
-                </div>
+              {/* MAIN INPUTS: FLIGHT NO & DATE */}
+              <div className="grid grid-cols-2 gap-4 mb-2">
+                  <div>
+                      <label className="text-[10px] text-gray-400 font-bold uppercase">Flight No.</label>
+                      <input 
+                         placeholder="SA302" 
+                         value={leg.flightNumber} 
+                         onChange={e => {const n=[...legs]; n[i].flightNumber=e.target.value.toUpperCase(); n[i].error=undefined; setLegs(n)}} 
+                         className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-lg font-bold uppercase text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                  </div>
+                  <div>
+                      <label className="text-[10px] text-gray-400 font-bold uppercase">Date</label>
+                      <input type="date" value={leg.date} onChange={e => {const n=[...legs]; n[i].date=e.target.value; setLegs(n)}} className="w-full p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm font-semibold text-gray-900" />
+                  </div>
               </div>
 
-              {tripType === 'multi' && i > 0 && (
-                <button onClick={() => setLegs(legs.filter((_, idx) => idx !== i))} className="absolute top-4 right-4 text-red-400 p-1">
-                    <Trash2 size={16} />
-                </button>
+              {/* TOGGLE FOR DETAILS */}
+              <button 
+                onClick={() => {const n=[...legs]; n[i].showManual = !n[i].showManual; setLegs(n)}}
+                className="text-xs text-blue-500 font-semibold flex items-center gap-1 mt-2 mb-2"
+              >
+                {leg.showManual ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} 
+                {leg.showManual ? 'Hide Details' : 'Manual Entry / Details'}
+              </button>
+
+              {/* HIDDEN DETAILS SECTION */}
+              {leg.showManual && (
+                  <div className="mt-3 pt-3 border-t border-gray-100 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="relative">
+                            <label className="text-[10px] text-gray-400 font-bold uppercase">From</label>
+                            <input 
+                                className="w-full p-2 bg-gray-50 rounded border border-gray-200 font-bold text-gray-900 uppercase"
+                                placeholder="CPT"
+                                value={activeSearch?.i === i && activeSearch.f === 'from' ? undefined : (leg.from ? leg.from.iata : '')}
+                                onChange={(e) => handleSearch(i, 'from', e.target.value)}
+                                onFocus={(e) => handleSearch(i, 'from', e.target.value)}
+                            />
+                            {activeSearch?.i === i && activeSearch.f === 'from' && suggestions.length > 0 && (
+                                <div className="absolute z-10 top-full w-full bg-white shadow-xl max-h-40 overflow-auto border rounded-b-lg">
+                                    {suggestions.map(s => <div key={s.iata} onClick={() => selectAirport(s)} className="p-2 hover:bg-gray-50 border-b text-sm font-bold">{s.iata}</div>)}
+                                </div>
+                            )}
+                        </div>
+                        <div className="relative">
+                            <label className="text-[10px] text-gray-400 font-bold uppercase">To</label>
+                            <input 
+                                className="w-full p-2 bg-gray-50 rounded border border-gray-200 font-bold text-gray-900 uppercase"
+                                placeholder="JNB"
+                                value={activeSearch?.i === i && activeSearch.f === 'to' ? undefined : (leg.to ? leg.to.iata : '')}
+                                onChange={(e) => handleSearch(i, 'to', e.target.value)}
+                                onFocus={(e) => handleSearch(i, 'to', e.target.value)}
+                            />
+                             {activeSearch?.i === i && activeSearch.f === 'to' && suggestions.length > 0 && (
+                                <div className="absolute z-10 top-full w-full bg-white shadow-xl max-h-40 overflow-auto border rounded-b-lg">
+                                    {suggestions.map(s => <div key={s.iata} onClick={() => selectAirport(s)} className="p-2 hover:bg-gray-50 border-b text-sm font-bold">{s.iata}</div>)}
+                                </div>
+                            )}
+                        </div>
+                      </div>
+                      
+                      {/* STATS */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="relative">
+                            <input type="number" placeholder="Dist" value={leg.distance} onChange={e => {const n=[...legs]; n[i].distance=Number(e.target.value); setLegs(n)}} className="w-full p-2 bg-gray-50 rounded border border-gray-200 text-sm" />
+                            <span className="absolute right-2 top-2 text-xs text-gray-400">km</span>
+                        </div>
+                        <div className="relative">
+                            <input type="number" placeholder="Time" value={leg.duration} onChange={e => {const n=[...legs]; n[i].duration=Number(e.target.value); setLegs(n)}} className="w-full p-2 bg-gray-50 rounded border border-gray-200 text-sm" />
+                            <span className="absolute right-2 top-2 text-xs text-gray-400">min</span>
+                        </div>
+                      </div>
+                  </div>
               )}
+
+              {tripType === 'multi' && i > 0 && <button onClick={() => setLegs(legs.filter((_, idx) => idx !== i))} className="absolute top-4 right-4 text-red-400"><Trash2 size={16}/></button>}
             </div>
           ))}
 
-          {tripType === 'multi' && (
-            <button 
-                onClick={() => setLegs([...legs, { from: '', to: '', date: '', airline: '' }])}
-                className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-semibold flex items-center justify-center gap-2 hover:bg-gray-50"
-            >
-                <Plus size={18} /> Add Another Flight
-            </button>
-          )}
+          {tripType === 'multi' && <button onClick={() => setLegs([...legs, { ...legs[legs.length-1], from: legs[legs.length-1]?.to, to: null, distance: '', duration: '', flightNumber: '', airline: '', showManual: false }])} className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 font-bold text-sm">+ Add Leg</button>}
 
-          <div className="pt-4 flex gap-3">
-            <button onClick={saveTrip} disabled={loading} className="flex-1 bg-blue-600 text-white p-4 rounded-xl font-bold shadow-lg shadow-blue-200">
-                {loading ? 'Saving...' : 'Save Trip'}
-            </button>
-            <button onClick={() => setView('list')} className="bg-white border border-gray-200 text-gray-700 p-4 rounded-xl font-bold">
-                Cancel
-            </button>
+          <div className="flex gap-3 pt-4">
+             <button onClick={saveTrip} disabled={loading} className="flex-1 bg-blue-600 text-white p-4 rounded-xl font-bold shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
+                {loading && <Loader2 className="animate-spin" size={20}/>}
+                {loading ? loadingMessage : 'Save Trip'}
+             </button>
+             <button onClick={() => setView('list')} className="bg-white border border-gray-200 text-gray-700 p-4 rounded-xl font-bold">Cancel</button>
           </div>
         </div>
       </div>
@@ -254,37 +309,31 @@ export default function FlightsPage() {
   // LIST VIEW
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-20">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">My Logbook</h1>
-        <Link href="/" className="bg-white p-2 rounded-lg text-gray-600 border border-gray-200 text-sm font-semibold">Back</Link>
-      </div>
-
-      <button onClick={() => setView('add')} className="w-full bg-blue-600 text-white p-4 rounded-xl mb-8 font-bold shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
-        <Plane size={20} /> Log New Trip
-      </button>
-
-      <div className="space-y-4">
-        {flights.length === 0 ? (
-            <div className="text-center text-gray-400 py-10">No flights logged yet.</div>
-        ) : (
-            flights.map((f) => (
-            <div key={f.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+       <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-900">Logbook</h1>
+          <Link href="/" className="bg-white p-2 rounded-lg border border-gray-200 text-gray-600"><ArrowLeft size={20}/></Link>
+       </div>
+       <button onClick={() => setView('add')} className="w-full bg-blue-600 text-white p-4 rounded-xl mb-6 font-bold shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Plus size={20}/> Log New Trip</button>
+       <div className="space-y-4">
+          {flights.map(f => (
+             <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
                 <div className="flex items-center gap-4">
-                <div className="bg-blue-50 p-3 rounded-full text-blue-600">
-                    <Plane size={20} />
-                </div>
-                <div>
-                    <div className="font-bold text-gray-900 text-lg">{f.origin} <span className="text-gray-300 mx-1">➝</span> {f.destination}</div>
-                    <div className="text-gray-500 text-sm">{new Date(f.date).toLocaleDateString()}</div>
-                </div>
+                   <div className="bg-blue-50 p-3 rounded-full text-blue-600"><Plane size={20}/></div>
+                   <div>
+                      <div className="text-lg font-bold text-gray-900">{f.origin} ➝ {f.destination}</div>
+                      <div className="text-xs text-gray-500 flex gap-2">
+                          <span>{new Date(f.date).toLocaleDateString()}</span>
+                          <span className="font-bold text-blue-500">{f.flight_number}</span>
+                      </div>
+                   </div>
                 </div>
                 <div className="text-right">
-                    <div className="text-xs font-semibold bg-gray-100 text-gray-600 px-2 py-1 rounded">{f.airline || 'N/A'}</div>
+                   <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
+                   <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
                 </div>
-            </div>
-            ))
-        )}
-      </div>
+             </div>
+          ))}
+       </div>
     </div>
   );
 }
