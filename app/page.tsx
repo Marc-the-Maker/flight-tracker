@@ -12,18 +12,15 @@ import { Plane, Calendar, Clock, Map, Plus } from 'lucide-react';
 export default function Home() {
   const [flights, setFlights] = useState<any[]>([]);
   const [graphMode, setGraphMode] = useState<'flights' | 'km' | 'time'>('flights');
-  
-  // Airport Database for Country Lookup
   const [airportDb, setAirportDb] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
-      // 1. Get Flights from Supabase
+      // 1. Get Flights
       const { data } = await supabase.from('flights').select('*').order('date', { ascending: true });
       if (data) setFlights(data);
 
-      // 2. Get Airport DB (for identifying Domestic vs International)
-      // Using the reliable MWGG source we used in the flights page
+      // 2. Get Airport DB
       const res = await fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json');
       if (res.ok) {
         const airports = await res.json();
@@ -33,7 +30,28 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // --- STATS ENGINE ---
+  // --- HELPER: ROBUST LOCAL CHECK ---
+  const isSouthAfrican = (code: string) => {
+    // 1. Find airport in DB
+    const airport = airportDb.find((a: any) => a.iata === code || a.icao === code);
+    
+    if (airport) {
+      // Check Country Name (Handles "South Africa", "Republic of South Africa", etc)
+      const country = airport.country?.toLowerCase() || "";
+      if (country.includes("south africa")) return true;
+      
+      // Check ICAO Code (South African airports start with FA..)
+      if (airport.icao?.startsWith("FA")) return true;
+    }
+    
+    // 2. Fallback: If DB lookup failed, check known major codes directly
+    const localCodes = ['JNB', 'CPT', 'DUR', 'HLA', 'GRJ', 'PLZ', 'ELS', 'KIM', 'BFN', 'MQP', 'PTG', 'UTH', 'RCB', 'PBZ', 'LNO', 'PHW', 'NTY', 'SIS', 'ZEC'];
+    if (localCodes.includes(code)) return true;
+
+    return false;
+  };
+
+  // --- STATS ---
   const currentYear = new Date().getFullYear();
   const ytdFlights = flights.filter(f => new Date(f.date).getFullYear() === currentYear);
 
@@ -46,47 +64,41 @@ export default function Home() {
     timeYTD: ytdFlights.reduce((a, c) => a + (c.duration_min || 0), 0),
   };
 
-  // --- GRAPH ENGINE ---
+  // --- GRAPH DATA ---
   const getGraphData = () => {
     const today = new Date();
     const months = [];
     
-    // Create last 12 months skeleton
     for (let i = 11; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       months.push({
-        name: d.toLocaleString('default', { month: 'short' }), // e.g., "Jan"
-        key: `${d.getFullYear()}-${d.getMonth()}`, // Unique ID for filtering
+        name: d.toLocaleString('default', { month: 'short' }),
+        key: `${d.getFullYear()}-${d.getMonth()}`,
       });
     }
 
     if (graphMode === 'flights') {
-      // --- SCATTER CHART LOGIC (DOTS) ---
+      // --- SCATTER CHART (DOTS) ---
       const scatterPoints: any[] = [];
       
       months.forEach((m) => {
-        // Find flights in this specific month
         const monthFlights = flights.filter(f => {
           const fd = new Date(f.date);
           return `${fd.getFullYear()}-${fd.getMonth()}` === m.key;
         });
 
         monthFlights.forEach((f, stackIndex) => {
-          // Check if Domestic (ZA to ZA)
-          const origin = airportDb.find((a: any) => a.iata === f.origin);
-          const dest = airportDb.find((a: any) => a.iata === f.destination);
+          // Check if Local (Starts AND Ends in ZA)
+          const originIsZA = isSouthAfrican(f.origin);
+          const destIsZA = isSouthAfrican(f.destination);
           
-          let isDomestic = false;
-          // Note: The MWGG database uses "South Africa" as the country name
-          if (origin?.country === "South Africa" && dest?.country === "South Africa") {
-            isDomestic = true;
-          }
+          const isLocal = originIsZA && destIsZA;
 
           scatterPoints.push({
-            x: m.name,       // X-Axis (Month Name)
-            y: stackIndex + 1, // Y-Axis (Stack Height: 1, 2, 3...)
-            z: 1,            // Dot Size
-            fill: isDomestic ? '#22c55e' : '#f97316', // Green (Domestic) vs Orange (Intl)
+            x: m.name,
+            y: stackIndex + 1,
+            z: 1,
+            fill: isLocal ? '#22c55e' : '#f97316', // Green (Local) vs Orange (Intl)
             tooltip: `${f.origin} ➝ ${f.destination}`
           });
         });
@@ -94,7 +106,7 @@ export default function Home() {
       return scatterPoints;
 
     } else {
-      // --- BAR CHART LOGIC (KM / TIME) ---
+      // --- BAR CHART (KM / TIME) ---
       return months.map(m => {
         const monthFlights = flights.filter(f => {
           const fd = new Date(f.date);
@@ -125,16 +137,15 @@ export default function Home() {
         </Link>
       </div>
 
-      {/* STATS GRID */}
+      {/* STATS */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <StatCard icon={<Plane size={18}/>} label="Flights" value={stats.count} sub={`${stats.countYTD} YTD`} />
         <StatCard icon={<Map size={18}/>} label="Distance" value={`${(stats.km/1000).toFixed(1)}k`} unit="km" sub={`${(stats.kmYTD/1000).toFixed(1)}k YTD`} />
         <StatCard icon={<Clock size={18}/>} label="Time" value={Math.floor(stats.time/60)} unit="h" sub={`${Math.floor(stats.timeYTD/60)}h YTD`} />
-        {/* Simple average calculation */}
         <StatCard icon={<Calendar size={18}/>} label="Avg Dist" value={stats.count > 0 ? Math.round(stats.km/stats.count) : 0} unit="km" sub="per flight" />
       </div>
 
-      {/* GRAPH SECTION */}
+      {/* ANALYTICS CARD */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-bold text-gray-700">Analytics</h2>
@@ -167,16 +178,15 @@ export default function Home() {
           </ResponsiveContainer>
         </div>
         
-        {/* LEGEND (Only for Flights View) */}
+        {/* LEGEND - UPDATED TO 'LOCAL' */}
         {graphMode === 'flights' && (
            <div className="flex justify-center gap-4 mt-4 text-xs font-semibold text-gray-500">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500"></div> Domestic (ZA)</div>
+              <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500"></div> Local (ZA)</div>
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-orange-500"></div> International</div>
            </div>
         )}
       </div>
 
-      {/* FOOTER NAV BUTTON */}
       <div className="fixed bottom-6 left-0 right-0 flex justify-center pointer-events-none">
          <Link href="/flights" className="bg-gray-900 text-white px-6 py-3 rounded-full shadow-xl font-bold text-sm pointer-events-auto flex items-center gap-2">
             View All Flights <Plane size={16}/>
