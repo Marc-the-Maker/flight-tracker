@@ -39,7 +39,7 @@ function FlightsContent() {
   
   // FILTERS STATE
   const [showFilters, setShowFilters] = useState(false);
-  const [filterPeriod, setFilterPeriod] = useState('All'); // NEW: Period Filter
+  const [filterPeriod, setFilterPeriod] = useState('All');
   const [filterType, setFilterType] = useState('All'); 
   const [filterAirline, setFilterAirline] = useState('All');
 
@@ -96,11 +96,10 @@ function FlightsContent() {
     return null;
   };
 
-  // --- HELPER: GET AIRLINE NAME FROM CODE ---
   const getAirlineName = (code: string) => {
       if (!code) return "Unknown";
       const airline = airlineList.find((a: any) => a.iata === code || a.icao === code);
-      return airline ? airline.name : code; // Return Name if found, else Code
+      return airline ? airline.name : code;
   };
 
   const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
@@ -194,7 +193,7 @@ function FlightsContent() {
     setLoading(false);
   };
 
-  // --- FILTER LOGIC ---
+  // --- FILTER & GROUPING LOGIC ---
   const uniqueAirlines = Array.from(new Set(flights.map(f => f.airline || resolveAirlineCode(f.flight_number)))).filter(Boolean).sort();
   
   const filteredFlights = flights.filter(f => {
@@ -229,8 +228,21 @@ function FlightsContent() {
       return true;
   });
 
+  // --- GROUPING BY MONTH ---
+  const groupedFlights = filteredFlights.reduce((groups: any[], flight) => {
+      const date = new Date(flight.date);
+      const monthYear = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.title === monthYear) {
+          lastGroup.flights.push(flight);
+      } else {
+          groups.push({ title: monthYear, flights: [flight] });
+      }
+      return groups;
+  }, []);
+
   if (view === 'add') {
-    // ... (Keep existing ADD VIEW code exactly as is) ...
     return (
       <div className="min-h-screen bg-gray-50 p-4">
         <h2 className="text-2xl font-black mb-6 text-gray-900 uppercase tracking-tight">Add Trip</h2>
@@ -312,7 +324,6 @@ function FlightsContent() {
                        <label className="text-[10px] font-bold text-gray-400 uppercase">Airline</label>
                        <select value={filterAirline} onChange={e => setFilterAirline(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
                            <option value="All">All Airlines</option>
-                           {/* Show Full Names in Dropdown */}
                            {uniqueAirlines.map(code => (
                                <option key={code} value={code}>{getAirlineName(code)}</option>
                            ))}
@@ -328,39 +339,46 @@ function FlightsContent() {
            )}
        </div>
 
-       <div className="space-y-4">
-          {filteredFlights.length === 0 ? (
+       {/* GROUPED LIST */}
+       <div className="space-y-6">
+          {groupedFlights.length === 0 ? (
               <div className="text-center py-10 text-gray-400 text-sm font-medium">No flights match your filters.</div>
           ) : (
-              filteredFlights.map(f => {
-                 const originObj = airportList.find(a => a.iata === f.origin);
-                 const destObj = airportList.find(a => a.iata === f.destination);
-                 const originName = originObj ? originObj.city : f.origin;
-                 const destName = destObj ? destObj.city : f.destination;
-                 const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
+              groupedFlights.map((group) => (
+                  <div key={group.title}>
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 ml-1">{group.title}</div>
+                      <div className="space-y-4">
+                          {group.flights.map((f: any) => {
+                             const originObj = airportList.find((a: any) => a.iata === f.origin);
+                             const destObj = airportList.find((a: any) => a.iata === f.destination);
+                             const originName = originObj ? originObj.city : f.origin;
+                             const destName = destObj ? destObj.city : f.destination;
+                             const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
 
-                 return (
-                     <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
-                        <div className="flex items-center gap-4">
-                           {/* BIGGER LOGO CONTAINER (w-14 h-14) */}
-                           <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
-                               {logoUrl ? (
-                                   <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-2" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
-                               ) : ( <Plane size={24} className="text-[#FF2800]"/> )}
-                               <Plane size={24} className="text-[#FF2800] hidden fallback-plane"/>
-                           </div>
-                           <div>
-                              <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
-                              <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
-                           </div>
-                        </div>
-                        <div className="text-right">
-                           <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
-                           <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
-                        </div>
-                     </div>
-                 );
-              })
+                             return (
+                                 <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
+                                    <div className="flex items-center gap-4">
+                                       <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                           {logoUrl ? (
+                                               <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-2" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
+                                           ) : ( <Plane size={24} className="text-[#FF2800]"/> )}
+                                           <Plane size={24} className="text-[#FF2800] hidden fallback-plane"/>
+                                       </div>
+                                       <div>
+                                          <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
+                                          <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
+                                       </div>
+                                    </div>
+                                    <div className="text-right">
+                                       <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
+                                       <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
+                                    </div>
+                                 </div>
+                             );
+                          })}
+                      </div>
+                  </div>
+              ))
           )}
        </div>
        <style jsx>{` .fallback-icon img { display: none; } .fallback-icon .fallback-plane { display: block; } `}</style>
