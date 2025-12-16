@@ -193,14 +193,12 @@ function FlightsContent() {
     setLoading(false);
   };
 
-  // --- FILTER & GROUPING LOGIC ---
   const uniqueAirlines = Array.from(new Set(flights.map(f => f.airline || resolveAirlineCode(f.flight_number)))).filter(Boolean).sort();
   
   const filteredFlights = flights.filter(f => {
       const d = new Date(f.date);
       const now = new Date();
       
-      // PERIOD FILTER
       if (filterPeriod === 'Last 30 Days') {
           const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(now.getDate() - 30);
           if (d < thirtyDaysAgo) return false;
@@ -214,11 +212,9 @@ function FlightsContent() {
           if (d < fiveYearsAgo) return false;
       }
       
-      // AIRLINE FILTER
       const code = f.airline || resolveAirlineCode(f.flight_number);
       if (filterAirline !== 'All' && code !== filterAirline) return false;
 
-      // TYPE FILTER
       if (filterType !== 'All') {
           const isLocal = f.is_local !== null ? f.is_local : (isSouthAfrican(f.origin) && isSouthAfrican(f.destination));
           if (filterType === 'Local' && !isLocal) return false;
@@ -228,7 +224,6 @@ function FlightsContent() {
       return true;
   });
 
-  // --- GROUPING BY MONTH ---
   const groupedFlights = filteredFlights.reduce((groups: any[], flight) => {
       const date = new Date(flight.date);
       const monthYear = date.toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -282,7 +277,6 @@ function FlightsContent() {
     );
   }
 
-  // LIST VIEW
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-20">
        <div className="flex justify-between items-center mb-6">
@@ -292,7 +286,6 @@ function FlightsContent() {
        
        <button onClick={() => setView('add')} className="w-full bg-[#FF2800] text-white p-4 rounded-xl mb-6 font-bold shadow-lg shadow-[#FF2800]/20 flex items-center justify-center gap-2 hover:bg-red-600 transition-colors"><Plus size={20}/> Log New Trip</button>
        
-       {/* FILTERS SECTION */}
        <div className="mb-6">
            <button onClick={() => setShowFilters(!showFilters)} className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-[#FF2800] mb-2 transition-colors">
                <Filter size={14}/> {showFilters ? 'Hide Filters' : 'Show Filters'}
@@ -339,7 +332,6 @@ function FlightsContent() {
            )}
        </div>
 
-       {/* GROUPED LIST */}
        <div className="space-y-6">
           {groupedFlights.length === 0 ? (
               <div className="text-center py-10 text-gray-400 text-sm font-medium">No flights match your filters.</div>
@@ -366,7 +358,10 @@ function FlightsContent() {
                                        </div>
                                        <div>
                                           <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
-                                          <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
+                                          <div className="text-xs text-gray-500 flex gap-2 mt-1">
+                                              <span>{new Date(f.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+                                              <span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span>
+                                          </div>
                                        </div>
                                     </div>
                                     <div className="text-right">
