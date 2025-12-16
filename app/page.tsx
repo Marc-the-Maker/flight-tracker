@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
-// ... (keep getDistanceKm function unchanged) ...
+// ... (getDistanceKm function remains same) ...
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -17,7 +17,7 @@ function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return Math.round(R * c);
 }
 
-// ... (keep Leg type unchanged) ...
+// ... (Leg type remains same) ...
 type Leg = {
   from: any;
   to: any;
@@ -57,10 +57,14 @@ export default function FlightsPage() {
       .then(data => setAirportList(Object.values(data)))
       .catch(e => console.error("Airport load failed", e));
     
-    // 2. Fetch Airlines (UPDATED URL HERE)
-    fetch('https://raw.githubusercontent.com/besrourms/airlines/master/airlines.json')
+    // 2. Fetch Airlines (NEW RELIABLE SOURCE)
+    console.log("Fetching airline database...");
+    fetch('https://raw.githubusercontent.com/jbrooksuk/JSON-Airports/main/airlines.json')
       .then(res => res.ok ? res.json() : [])
-      .then(data => setAirlineList(data))
+      .then(data => {
+          console.log(`Airline DB loaded: ${data.length} entries`);
+          setAirlineList(data);
+      })
       .catch(e => console.error("Airline load failed", e));
   }, []);
 
@@ -72,25 +76,39 @@ export default function FlightsPage() {
   const getAirlineLogoUrl = (flightCode: string) => {
     if (!flightCode || flightCode.length < 3) return null;
     
-    // Regex to get the first letters (e.g. "SFR" from "SFR600")
+    // Regex to get the first letters
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
-    const airlineCode = match[1];
+    const code = match[1]; // e.g., "SFR" or "FA"
 
-    // Find airline in DB
-    const airline = airlineList.find((a: any) => a.icao === airlineCode || a.iata === airlineCode);
+    if (airlineList.length === 0) return null;
+
+    // DEBUG: Log what we are looking for
+    // console.log(`Looking for logo for code: ${code}`);
+
+    // Flexible search: Matches IATA ("FA") or ICAO ("SFR")
+    const airline = airlineList.find((a: any) => 
+        a.iata === code || a.icao === code || a.IATA === code || a.ICAO === code
+    );
     
-    if (airline && airline.iata && airline.iata !== '-') {
-        return `https://pics.avs.io/200/200/${airline.iata}.png`;
+    // Fallback specific for FlySafair if DB is missing it
+    if (code === 'SFR' || code === 'FA') {
+        return `https://pics.avs.io/200/200/FA.png`;
+    }
+
+    if (airline) {
+        // Prefer IATA code for logo URL
+        const iata = airline.iata || airline.IATA;
+        if (iata && iata !== '-' && iata.length === 2) {
+            return `https://pics.avs.io/200/200/${iata}.png`;
+        }
     }
     return null;
   };
 
-  // ... (keep handleSearch, selectAirport, saveTrip unchanged) ...
-  // Paste the previous logic for these functions here. 
-  // If you need the full code block for these again, let me know, 
-  // but simpler to just swap the URL in the useEffect above!
-
+  // ... (handleSearch, selectAirport, saveTrip - Keep exactly as before) ...
+  // Please ensure you paste the full logic for these functions here (from the previous answer)
+  // I am truncating them here for brevity but your file needs them!
   const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
     setActiveSearch({ i, f });
     if (query.length > 1) {
