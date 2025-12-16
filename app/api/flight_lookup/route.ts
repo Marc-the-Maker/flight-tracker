@@ -4,46 +4,59 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const ident = searchParams.get('ident');
 
-  if (!ident) return NextResponse.json({ error: 'No flight number provided' }, { status: 400 });
+  console.log(`🔍 [API] Searching for flight: ${ident}`); // LOG 1
+
+  if (!ident) return NextResponse.json({ error: 'No ident' }, { status: 400 });
 
   const apiKey = process.env.FLIGHTAWARE_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: 'API Key missing' }, { status: 500 });
+  if (!apiKey) {
+    console.error("❌ [API] API Key is MISSING in environment variables!"); // LOG 2
+    return NextResponse.json({ error: 'Server config error' }, { status: 500 });
+  }
 
   try {
-    // 1. Ask FlightAware for the last 15 flights with this number
-    const res = await fetch(`https://aeroapi.flightaware.com/aeroapi/flights/${ident}?max_pages=1`, {
+    const url = `https://aeroapi.flightaware.com/aeroapi/flights/${ident}?max_pages=1`;
+    console.log(`📡 [API] Fetching: ${url}`); // LOG 3
+
+    const res = await fetch(url, {
       headers: { 'x-apikey': apiKey }
     });
 
-    if (!res.ok) throw new Error('Failed to fetch from FlightAware');
+    console.log(`STATUS: ${res.status}`); // LOG 4
+
+    if (!res.ok) {
+        const errText = await res.text();
+        console.error(`❌ [API] Error from FlightAware: ${errText}`); // LOG 5
+        return NextResponse.json({ error: 'Provider Error' }, { status: res.status });
+    }
 
     const data = await res.json();
+    console.log(`✅ [API] Flights found: ${data.flights?.length || 0}`); // LOG 6
+
     const flights = data.flights;
 
     if (!flights || flights.length === 0) {
       return NextResponse.json({ error: 'Flight not found' }, { status: 404 });
     }
 
-    // 2. Find the most relevant flight (the one that actually departed)
-    // We look for the first flight that has an actual_off (takeoff time)
+    // Logic to find the correct flight leg
     const lastFlight = flights.find((f: any) => f.actual_off) || flights[0];
 
-    // 3. Extract the precise data
     const payload = {
       origin: lastFlight.origin.code,
       destination: lastFlight.destination.code,
-      // FlightAware gives seconds, we want minutes
-      duration: lastFlight.filed_ete ? Math.round(lastFlight.filed_ete / 60) : 0, 
-      // If actual_runway_off and on exist, calculate ACTUAL time (more accurate)
+      duration: lastFlight.filed_ete ? Math.round(lastFlight.filed_ete / 60) : 0,
       actual_duration: (lastFlight.actual_on && lastFlight.actual_off) 
         ? Math.round((new Date(lastFlight.actual_on).getTime() - new Date(lastFlight.actual_off).getTime()) / 60000)
         : null,
       departure_date: lastFlight.scheduled_off.split('T')[0]
     };
-
+    
+    console.log("📦 [API] Sending payload:", payload);
     return NextResponse.json(payload);
 
   } catch (error) {
-    return NextResponse.json({ error: 'Lookup failed' }, { status: 500 });
+    console.error("🔥 [API] Crash:", error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
