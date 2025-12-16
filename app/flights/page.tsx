@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle, Filter, X } from 'lucide-react';
 
-// --- CONSTANTS ---
 const MANUAL_AIRLINE_MAP: Record<string, string> = { 
     'SFR': 'FA', 'FA': 'FA', 'SAA': 'SA', 'SA': 'SA', 'LNK': '4Z', '4Z': '4Z', 'BAW': 'BA', 'BA': 'BA', 'CAW': 'MN', 'MN': 'MN', 'KUL': 'MN' 
 };
@@ -25,8 +24,11 @@ type Leg = {
   from: any; to: any; date: string; flightNumber: string; airline: string; distance: number | ''; duration: number | ''; showManual: boolean; error?: string;
 };
 
-export default function FlightsPage() {
-  const [view, setView] = useState<'list' | 'add'>('list');
+function FlightsContent() {
+  const searchParams = useSearchParams();
+  const initialView = searchParams.get('new') === 'true' ? 'add' : 'list';
+  
+  const [view, setView] = useState<'list' | 'add'>(initialView);
   const [flights, setFlights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -35,6 +37,13 @@ export default function FlightsPage() {
   const [airlineList, setAirlineList] = useState<any[]>([]); 
   const [tripType, setTripType] = useState<'one-way' | 'return' | 'multi'>('return');
   
+  // FILTERS STATE
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterYear, setFilterYear] = useState('All');
+  const [filterMonth, setFilterMonth] = useState('All');
+  const [filterType, setFilterType] = useState('All'); // All, Local, International
+  const [filterAirline, setFilterAirline] = useState('All');
+
   const [legs, setLegs] = useState<Leg[]>([
     { from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false },
     { from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false }
@@ -45,17 +54,8 @@ export default function FlightsPage() {
 
   useEffect(() => {
     fetchHistory();
-    // Fetch Airports
-    fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json')
-      .then(res => res.ok ? res.json() : [])
-      .then(data => setAirportList(Object.values(data)))
-      .catch(e => console.error("Airport load failed", e));
-    
-    // Fetch Airlines (FIXED URL)
-    fetch('https://raw.githubusercontent.com/npow/airline-codes/master/airlines.json')
-      .then(res => res.ok ? res.json() : [])
-      .then(data => setAirlineList(data))
-      .catch(e => console.error("Airline load failed", e));
+    fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json').then(res => res.ok ? res.json() : []).then(data => setAirportList(Object.values(data)));
+    fetch('https://raw.githubusercontent.com/npow/airline-codes/master/airlines.json').then(res => res.ok ? res.json() : []).then(data => setAirlineList(data));
   }, []);
 
   const fetchHistory = async () => {
@@ -63,24 +63,29 @@ export default function FlightsPage() {
     if (data) setFlights(data);
   };
 
-  // Helper to resolve airline IATA code (e.g. "FA")
+  // --- HELPER: CHECK IF AIRPORT IS SOUTH AFRICAN ---
+  // (Used for both saving new flights and filtering old ones)
+  const isSouthAfrican = (code: string) => {
+    const airport = airportList.find((a: any) => a.iata === code || a.icao === code);
+    if (airport) {
+      const country = airport.country?.toLowerCase() || "";
+      if (country.includes("south africa")) return true;
+      if (airport.icao?.startsWith("FA")) return true;
+    }
+    const localCodes = ['JNB', 'CPT', 'DUR', 'HLA', 'GRJ', 'PLZ', 'ELS', 'KIM', 'BFN', 'MQP', 'PTG', 'UTH', 'RCB', 'PBZ', 'LNO', 'PHW', 'NTY', 'SIS', 'ZEC'];
+    if (localCodes.includes(code)) return true;
+    return false;
+  };
+
   const resolveAirlineCode = (flightCode: string) => {
     if (!flightCode || flightCode.length < 2) return null;
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
     const prefix = match[1];
-    
-    // 1. Check Manual Map
     if (MANUAL_AIRLINE_MAP[prefix]) return MANUAL_AIRLINE_MAP[prefix];
-    
-    // 2. Check Database
     if (airlineList.length > 0) {
-        // Robust check for active airlines (handles 'Y' string or boolean true)
-        const airline = airlineList.find((a: any) => 
-            (a.icao === prefix || a.iata === prefix) && 
-            (a.active === "Y" || a.active === true)
-        );
-        if (airline && airline.iata && airline.iata !== '-') {
+        const airline = airlineList.find((a: any) => a.icao === prefix || a.iata === prefix);
+        if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) {
             return airline.iata;
         }
     }
@@ -88,9 +93,9 @@ export default function FlightsPage() {
   };
 
   const getAirlineLogoUrl = (flightCode: string, savedAirline: string | null) => {
-    // Use saved code if available, otherwise resolve it
-    const code = savedAirline || resolveAirlineCode(flightCode);
-    if (code) return `https://pics.avs.io/200/200/${code}.png`;
+    if (savedAirline) return `https://pics.avs.io/200/200/${savedAirline}.png`;
+    const calculated = resolveAirlineCode(flightCode);
+    if (calculated) return `https://pics.avs.io/200/200/${calculated}.png`;
     return null;
   };
 
@@ -125,13 +130,14 @@ export default function FlightsPage() {
     for (let i = 0; i < newLegs.length; i++) {
         const leg = newLegs[i];
         if (!leg.flightNumber && !leg.from) continue;
+        
+        // Auto-sanitize
+        if (leg.flightNumber) leg.flightNumber = leg.flightNumber.replace(/\s/g, '');
+
         let finalDuration = Number(leg.duration);
         let finalDistance = Number(leg.distance);
         let originObj = leg.from;
         let destObj = leg.to;
-
-        // Auto-sanitize flight number (remove spaces)
-        if (leg.flightNumber) leg.flightNumber = leg.flightNumber.replace(/\s/g, '');
 
         if (leg.flightNumber && leg.flightNumber.length > 2) {
             setLoadingMessage(`Looking up ${leg.flightNumber}...`);
@@ -154,12 +160,16 @@ export default function FlightsPage() {
              if (!finalDuration) finalDuration = Math.round((finalDistance / 800 * 60) + 30);
         }
 
-        // Calculate and Save Airline Code
-        let resolvedAirline = leg.airline;
+        let resolvedAirline = leg.airline; 
         if (!resolvedAirline && leg.flightNumber) {
             const foundCode = resolveAirlineCode(leg.flightNumber);
             if (foundCode) resolvedAirline = foundCode;
         }
+
+        // --- CALCULATE LOCAL VS INTERNATIONAL ---
+        const isLocal = (originObj && destObj) 
+            ? (isSouthAfrican(originObj.iata) && isSouthAfrican(destObj.iata))
+            : false;
 
         if (!hasError) {
             payload.push({ 
@@ -169,7 +179,8 @@ export default function FlightsPage() {
                 airline: resolvedAirline || null, 
                 flight_number: leg.flightNumber || null, 
                 distance_km: finalDistance || 0, 
-                duration_min: finalDuration || 0 
+                duration_min: finalDuration || 0,
+                is_local: isLocal // Save to new column
             });
         }
     }
@@ -181,6 +192,31 @@ export default function FlightsPage() {
     else { setView('list'); fetchHistory(); setLegs([{ from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false }]); }
     setLoading(false);
   };
+
+  // --- FILTER LOGIC ---
+  const uniqueYears = Array.from(new Set(flights.map(f => new Date(f.date).getFullYear().toString()))).sort().reverse();
+  const uniqueAirlines = Array.from(new Set(flights.map(f => f.airline || resolveAirlineCode(f.flight_number)))).filter(Boolean).sort();
+  
+  const filteredFlights = flights.filter(f => {
+      const d = new Date(f.date);
+      // Date Filters
+      if (filterYear !== 'All' && d.getFullYear().toString() !== filterYear) return false;
+      if (filterMonth !== 'All' && d.toLocaleString('default', { month: 'long' }) !== filterMonth) return false;
+      
+      // Airline Filter
+      const code = f.airline || resolveAirlineCode(f.flight_number);
+      if (filterAirline !== 'All' && code !== filterAirline) return false;
+
+      // Type Filter (Smart Fallback for old data)
+      if (filterType !== 'All') {
+          // If 'is_local' exists in DB, use it. If null, calculate it on the fly using helper.
+          const isLocal = f.is_local !== null ? f.is_local : (isSouthAfrican(f.origin) && isSouthAfrican(f.destination));
+          if (filterType === 'Local' && !isLocal) return false;
+          if (filterType === 'International' && isLocal) return false;
+      }
+
+      return true;
+  });
 
   if (view === 'add') {
     return (
@@ -229,40 +265,102 @@ export default function FlightsPage() {
           <h1 className="text-3xl font-black text-gray-900 uppercase tracking-tight">Flight Logbook</h1>
           <Link href="/" className="bg-white p-2 rounded-lg border border-gray-200 text-gray-600 hover:text-[#FF2800] hover:border-[#FF2800] transition-colors"><ArrowLeft size={20}/></Link>
        </div>
+       
        <button onClick={() => setView('add')} className="w-full bg-[#FF2800] text-white p-4 rounded-xl mb-6 font-bold shadow-lg shadow-[#FF2800]/20 flex items-center justify-center gap-2 hover:bg-red-600 transition-colors"><Plus size={20}/> Log New Trip</button>
-       <div className="space-y-4">
-          {flights.map(f => {
-             const originObj = airportList.find(a => a.iata === f.origin);
-             const destObj = airportList.find(a => a.iata === f.destination);
-             const originName = originObj ? originObj.city : f.origin;
-             const destName = destObj ? destObj.city : f.destination;
-             
-             // OPTIMIZED LOGO LOGIC
-             const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
-
-             return (
-                 <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
-                    <div className="flex items-center gap-4">
-                       <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
-                           {logoUrl ? (
-                               <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
-                           ) : ( <Plane size={20} className="text-[#FF2800]"/> )}
-                           <Plane size={20} className="text-[#FF2800] hidden fallback-plane"/>
+       
+       {/* FILTERS SECTION */}
+       <div className="mb-6">
+           <button onClick={() => setShowFilters(!showFilters)} className="flex items-center gap-2 text-xs font-bold text-gray-500 hover:text-[#FF2800] mb-2 transition-colors">
+               <Filter size={14}/> {showFilters ? 'Hide Filters' : 'Show Filters'}
+           </button>
+           
+           {showFilters && (
+               <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2">
+                   <div className="grid grid-cols-2 gap-3">
+                       <div>
+                           <label className="text-[10px] font-bold text-gray-400 uppercase">Year</label>
+                           <select value={filterYear} onChange={e => setFilterYear(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                               <option value="All">All Years</option>
+                               {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                           </select>
                        </div>
                        <div>
-                          <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
-                          <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
+                           <label className="text-[10px] font-bold text-gray-400 uppercase">Month</label>
+                           <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                               <option value="All">All Months</option>
+                               {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => <option key={m} value={m}>{m}</option>)}
+                           </select>
                        </div>
-                    </div>
-                    <div className="text-right">
-                       <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
-                       <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
-                    </div>
-                 </div>
-             );
-          })}
+                   </div>
+                   <div className="grid grid-cols-2 gap-3">
+                        <div>
+                           <label className="text-[10px] font-bold text-gray-400 uppercase">Type</label>
+                           <select value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                               <option value="All">All Flights</option>
+                               <option value="Local">Local (ZA)</option>
+                               <option value="International">International</option>
+                           </select>
+                        </div>
+                        <div>
+                           <label className="text-[10px] font-bold text-gray-400 uppercase">Airline</label>
+                           <select value={filterAirline} onChange={e => setFilterAirline(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                               <option value="All">All Airlines</option>
+                               {uniqueAirlines.map(a => <option key={a} value={a}>{a}</option>)}
+                           </select>
+                        </div>
+                   </div>
+                   {(filterYear !== 'All' || filterMonth !== 'All' || filterType !== 'All' || filterAirline !== 'All') && (
+                       <button onClick={() => { setFilterYear('All'); setFilterMonth('All'); setFilterType('All'); setFilterAirline('All'); }} className="w-full py-2 text-xs font-bold text-red-400 hover:text-red-600 flex items-center justify-center gap-1">
+                           <X size={12}/> Clear Filters
+                       </button>
+                   )}
+               </div>
+           )}
+       </div>
+
+       <div className="space-y-4">
+          {filteredFlights.length === 0 ? (
+              <div className="text-center py-10 text-gray-400 text-sm font-medium">No flights match your filters.</div>
+          ) : (
+              filteredFlights.map(f => {
+                 const originObj = airportList.find(a => a.iata === f.origin);
+                 const destObj = airportList.find(a => a.iata === f.destination);
+                 const originName = originObj ? originObj.city : f.origin;
+                 const destName = destObj ? destObj.city : f.destination;
+                 const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
+
+                 return (
+                     <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
+                        <div className="flex items-center gap-4">
+                           <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                               {logoUrl ? (
+                                   <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
+                               ) : ( <Plane size={20} className="text-[#FF2800]"/> )}
+                               <Plane size={20} className="text-[#FF2800] hidden fallback-plane"/>
+                           </div>
+                           <div>
+                              <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
+                              <div className="text-xs text-gray-500 flex gap-2 mt-1"><span>{new Date(f.date).toLocaleDateString()}</span><span className="font-bold text-[#FF2800] bg-[#FF2800]/10 px-1.5 py-0.5 rounded">{f.flight_number}</span></div>
+                           </div>
+                        </div>
+                        <div className="text-right">
+                           <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
+                           <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
+                        </div>
+                     </div>
+                 );
+              })
+          )}
        </div>
        <style jsx>{` .fallback-icon img { display: none; } .fallback-icon .fallback-plane { display: block; } `}</style>
     </div>
+  );
+}
+
+export default function FlightsPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+      <FlightsContent />
+    </Suspense>
   );
 }
