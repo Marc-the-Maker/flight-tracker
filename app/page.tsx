@@ -104,7 +104,7 @@ export default function Home() {
   const CustomBar = (props: any) => {
     const { x, y, width, height, payload } = props;
     
-    // If not in flights mode, or no flights, render nothing (standard bar handles it)
+    // If not in flights mode, or no flights, render STANDARD BAR (Red now)
     if (graphMode !== 'flights' || payload.value === 0) {
         return <path d={`M${x},${y + height} L${x + width},${y + height} L${x + width},${y} L${x},${y} Z`} fill="#FF2800" />;
     }
@@ -114,14 +114,6 @@ export default function Home() {
       <g>
         {payload.flightsDetail.map((flight: any, index: number) => {
             const isLocal = flight.isLocal;
-            // Stack them upwards from the bottom of the chart
-            // Note: In SVG, y=0 is the top. We need to calculate position from the bottom axis line.
-            // The "y" prop passed to us is the Top of the bar. 
-            // We want to start drawing from the bottom (which is y + height) and go up.
-            
-            // Recharts passes 'height' as the bar height. 
-            // The bottom line of the chart is at (y + height).
-            // We want to stack dots starting at (y + height - padding).
             
             const dotY = (y + height) - (index * 15) - 10; // 15px spacing
             
@@ -141,33 +133,34 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24">
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-6">
+      {/* HEADER - NEW STYLE */}
+      <div className="flex justify-between items-center mb-8">
         <div>
-           <h1 className="text-2xl font-bold text-gray-900">MARC'S Flight Tracker</h1>
-           <div className="text-xs text-gray-400 font-medium"></div>
+           <h1 className="text-3xl font-black text-gray-900 uppercase tracking-tight leading-none">
+             MARC&apos;S <br/> <span className="text-[#FF2800]">FLIGHT TRACKER</span>
+           </h1>
         </div>
-        <Link href="/flights" className="bg-blue-600 text-white p-2 rounded-full shadow-lg">
-           <Plus />
+        <Link href="/flights" className="bg-[#FF2800] text-white p-3 rounded-full shadow-lg shadow-[#FF2800]/20 hover:scale-105 transition-transform">
+           <Plus size={24} />
         </Link>
       </div>
 
-      {/* STATS */}
+      {/* STATS - RED ICONS */}
       <div className="grid grid-cols-2 gap-3 mb-6">
-        <StatCard icon={<Plane size={18}/>} label="Flights" value={stats.count} sub={`${stats.countYTD} YTD`} />
-        <StatCard icon={<Map size={18}/>} label="Distance" value={`${(stats.km/1000).toFixed(1)}k`} unit="km" sub={`${(stats.kmYTD/1000).toFixed(1)}k YTD`} />
-        <StatCard icon={<Clock size={18}/>} label="Time" value={Math.floor(stats.time/60)} unit="h" sub={`${Math.floor(stats.timeYTD/60)}h YTD`} />
-        <StatCard icon={<Calendar size={18}/>} label="Avg Dist" value={stats.count > 0 ? Math.round(stats.km/stats.count) : 0} unit="km" sub="per flight" />
+        <StatCard icon={<Plane size={18} className="text-[#FF2800]"/>} label="Flights" value={stats.count} sub={`${stats.countYTD} YTD`} />
+        <StatCard icon={<Map size={18} className="text-[#FF2800]"/>} label="Distance" value={`${(stats.km/1000).toFixed(1)}k`} unit="km" sub={`${(stats.kmYTD/1000).toFixed(1)}k YTD`} />
+        <StatCard icon={<Clock size={18} className="text-[#FF2800]"/>} label="Time" value={Math.floor(stats.time/60)} unit="h" sub={`${Math.floor(stats.timeYTD/60)}h YTD`} />
+        <StatCard icon={<Calendar size={18} className="text-[#FF2800]"/>} label="Avg Dist" value={stats.count > 0 ? Math.round(stats.km/stats.count) : 0} unit="km" sub="per flight" />
       </div>
 
       {/* GRAPH CARD */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="font-bold text-gray-700">Analytics</h2>
+          <h2 className="font-bold text-gray-800 text-lg">Analytics</h2>
           <div className="flex bg-gray-100 rounded-lg p-1">
             {['flights', 'km', 'time'].map(m => (
               <button key={m} onClick={() => setGraphMode(m as any)}
-                className={`px-3 py-1 text-xs font-bold capitalize rounded-md transition-all ${graphMode === m ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-400'}`}>
+                className={`px-3 py-1 text-xs font-bold capitalize rounded-md transition-all ${graphMode === m ? 'bg-white text-[#FF2800] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                 {m}
               </button>
             ))}
@@ -193,19 +186,18 @@ export default function Home() {
                     axisLine={false} 
                     tickLine={false} 
                     tick={{fill: '#9ca3af'}} 
-                    // Force integers only for flight count
                     allowDecimals={graphMode !== 'flights'}
                 />
                 
                 <Tooltip cursor={{fill: '#f9fafb', opacity: 0.5}} content={<CustomTooltip mode={graphMode} />} />
 
-                {/* THE MAGIC BAR */}
+                {/* THE MAGIC BAR - RED FILL */}
                 <Bar 
                     dataKey="value" 
                     shape={graphMode === 'flights' ? <CustomBar /> : undefined}
                     fill="#FF2800" 
                     radius={[4, 4, 0, 0]}
-                    isAnimationActive={false} // No flash
+                    isAnimationActive={false} 
                 />
             </BarChart>
           </ResponsiveContainer>
@@ -219,9 +211,10 @@ export default function Home() {
         )}
       </div>
 
+      {/* FOOTER BUTTON */}
       <div className="fixed bottom-6 left-0 right-0 flex justify-center pointer-events-none">
-         <Link href="/flights" className="bg-gray-900 text-white px-6 py-3 rounded-full shadow-xl font-bold text-sm pointer-events-auto flex items-center gap-2">
-            View All Flights <Plane size={16}/>
+         <Link href="/flights" className="bg-[#FF2800] text-white px-6 py-3 rounded-full shadow-xl shadow-[#FF2800]/30 font-bold text-sm pointer-events-auto flex items-center gap-2 hover:bg-red-600 transition-colors">
+            View Flight Log <Plane size={16}/>
          </Link>
       </div>
     </div>
@@ -230,12 +223,12 @@ export default function Home() {
 
 function StatCard({ icon, label, value, sub, unit }: any) {
   return (
-    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28">
+    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between h-28 hover:shadow-md transition-shadow">
       <div className="text-gray-400 mb-1">{icon}</div>
       <div>
-        <div className="text-2xl font-bold text-gray-900">{value}<span className="text-sm text-gray-400 font-normal ml-1">{unit}</span></div>
-        <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide">{label}</div>
-        <div className="text-[10px] text-blue-500 mt-1 font-medium">{sub}</div>
+        <div className="text-2xl font-black text-gray-900">{value}<span className="text-sm text-gray-400 font-normal ml-1">{unit}</span></div>
+        <div className="text-xs text-gray-500 font-bold uppercase tracking-wider">{label}</div>
+        <div className="text-[10px] text-[#FF2800] mt-1 font-semibold opacity-80">{sub}</div>
       </div>
     </div>
   );
@@ -246,7 +239,6 @@ const CustomTooltip = ({ active, payload, mode }: any) => {
     const data = payload[0].payload;
     
     if (mode === 'flights' && data.flightsDetail && data.flightsDetail.length > 0) {
-        // Show list of flights in that month
         return (
             <div className="bg-gray-900 text-white text-xs p-3 rounded shadow-xl z-50">
                 <div className="font-bold mb-2 text-gray-400 border-b border-gray-700 pb-1">{data.name}</div>
@@ -260,11 +252,10 @@ const CustomTooltip = ({ active, payload, mode }: any) => {
         );
     }
     
-    // Standard tooltip
     return (
         <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
-            <div className="font-bold">{payload[0].value}</div>
-            <div className="opacity-75">{data.name}</div>
+            <div className="font-bold text-[#FF2800] text-lg">{payload[0].value}</div>
+            <div className="opacity-75 uppercase text-[10px] tracking-wider">{data.name}</div>
         </div>
     );
   }
