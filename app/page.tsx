@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
-  BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, 
-  ComposedChart, Scatter, YAxis, CartesianGrid, ZAxis
+  Bar, XAxis, Tooltip, ResponsiveContainer, 
+  ComposedChart, Scatter, YAxis, CartesianGrid
 } from 'recharts';
 import Link from 'next/link';
 import { Plane, Calendar, Clock, Map, Plus } from 'lucide-react';
@@ -16,11 +16,9 @@ export default function Home() {
 
   useEffect(() => {
     const fetchData = async () => {
-      // 1. Get Flights
       const { data } = await supabase.from('flights').select('*').order('date', { ascending: true });
       if (data) setFlights(data);
 
-      // 2. Get Airport DB
       const res = await fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json');
       if (res.ok) {
         const airports = await res.json();
@@ -61,19 +59,23 @@ export default function Home() {
     const today = new Date();
     const months = [];
     
-    // 1. Create the skeleton (Last 12 Months)
-    // We reverse it so the current month is on the far right
+    // 1. Create 12-Month Skeleton
     for (let i = 11; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       months.push({
-        name: d.toLocaleString('default', { month: 'short' }), // e.g., "Aug"
-        key: `${d.getFullYear()}-${d.getMonth()}`, // e.g., "2024-7"
+        name: d.toLocaleString('default', { month: 'short' }),
+        key: `${d.getFullYear()}-${d.getMonth()}`,
+        // Add a "zero" value for the ghost bar so the grid always renders
+        placeholder: 0 
       });
     }
 
-    // 2. Map data to the skeleton
+    let scatterData: any[] = [];
+    let yLimit = 4;
+    let yTicks: number[] = [];
+
+    // 2. Populate Data
     if (graphMode === 'flights') {
-      const scatterPoints: any[] = [];
       let maxFlightsInMonth = 0;
       
       months.forEach((m) => {
@@ -82,7 +84,6 @@ export default function Home() {
           return `${fd.getFullYear()}-${fd.getMonth()}` === m.key;
         });
 
-        // Track max for Y-Axis scaling
         if (monthFlights.length > maxFlightsInMonth) maxFlightsInMonth = monthFlights.length;
 
         monthFlights.forEach((f, stackIndex) => {
@@ -90,42 +91,33 @@ export default function Home() {
           const destIsZA = isSouthAfrican(f.destination);
           const isLocal = originIsZA && destIsZA;
 
-          scatterPoints.push({
-            x: m.name,       // Must match the 'name' in the months array
-            y: stackIndex + 1, // Stack height (1, 2, 3...)
-            z: 1,            
+          scatterData.push({
+            x: m.name, // Matches XAxis "name"
+            y: stackIndex + 1,
+            z: 1,
             fill: isLocal ? '#22c55e' : '#f97316',
             tooltip: `${f.origin} ➝ ${f.destination}`
           });
         });
       });
 
-      // Calculate Y-Axis Limit (Min 4, or higher if needed)
-      const yLimit = Math.max(4, maxFlightsInMonth + 1);
-      
-      return { 
-        xAxisData: months, // The 12 empty columns
-        scatterData: scatterPoints, // The actual dots
-        yLimit, 
-        yTicks: Array.from({length: yLimit + 1}, (_, i) => i) // [0, 1, 2, 3, 4...]
-      };
+      yLimit = Math.max(4, maxFlightsInMonth + 1);
+      yTicks = Array.from({length: yLimit + 1}, (_, i) => i);
 
     } else {
-      // Bar Chart Data (Simple mapping)
-      const barData = months.map(m => {
+      // For KM/Time, we map directly to the months array
+      months.forEach(m => {
         const monthFlights = flights.filter(f => {
           const fd = new Date(f.date);
           return `${fd.getFullYear()}-${fd.getMonth()}` === m.key;
         });
-
-        let val = 0;
-        if (graphMode === 'km') val = monthFlights.reduce((a, c) => a + (c.distance_km || 0), 0);
-        if (graphMode === 'time') val = Math.floor(monthFlights.reduce((a, c) => a + (c.duration_min || 0), 0) / 60);
-
-        return { name: m.name, value: val };
+        
+        if (graphMode === 'km') m.placeholder = monthFlights.reduce((a, c) => a + (c.distance_km || 0), 0);
+        if (graphMode === 'time') m.placeholder = Math.floor(monthFlights.reduce((a, c) => a + (c.duration_min || 0), 0) / 60);
       });
-      return { xAxisData: barData, scatterData: [], yLimit: 0, yTicks: [] };
     }
+
+    return { xAxisData: months, scatterData, yLimit, yTicks };
   };
 
   const { xAxisData, scatterData, yLimit, yTicks } = getGraphData();
@@ -151,7 +143,7 @@ export default function Home() {
         <StatCard icon={<Calendar size={18}/>} label="Avg Dist" value={stats.count > 0 ? Math.round(stats.km/stats.count) : 0} unit="km" sub="per flight" />
       </div>
 
-      {/* ANALYTICS CARD */}
+      {/* GRAPH CARD */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-bold text-gray-700">Analytics</h2>
@@ -167,44 +159,66 @@ export default function Home() {
 
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            {graphMode === 'flights' ? (
-              // COMPOSED CHART Allows combining X-Axis Categories with Scatter Dots
-              <ComposedChart data={xAxisData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={true} stroke="#f0f0f0" />
+            <ComposedChart data={xAxisData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
+                {/* GRID: 
+                   We use a CartesianGrid to create the "columns". 
+                */}
+                <CartesianGrid strokeDasharray="3 3" vertical={true} horizontal={true} stroke="#f3f4f6" />
                 
-                {/* 1. X-Axis: Always shows all 12 months */}
-                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
-                
-                {/* 2. Y-Axis: Integer ticks only (0, 1, 2, 3, 4...) */}
-                <YAxis 
-                    type="number" 
-                    domain={[0, yLimit]} 
-                    ticks={yTicks}
+                {/* X-AXIS: 
+                   scale="band" is CRITICAL. It forces the chart to treat "Jan", "Feb" as categories 
+                   that take up space, even if we are drawing dots.
+                */}
+                <XAxis 
+                    dataKey="name" 
+                    scale="band" 
+                    padding={{ left: 10, right: 10 }}
                     fontSize={10} 
                     axisLine={false} 
                     tickLine={false} 
                     tick={{fill: '#9ca3af'}} 
                 />
                 
-                <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<CustomTooltip />} />
+                {/* Y-AXIS: 
+                   Dynamic based on mode.
+                */}
+                {graphMode === 'flights' ? (
+                   <YAxis 
+                        type="number" 
+                        domain={[0, yLimit]} 
+                        ticks={yTicks}
+                        fontSize={10} 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{fill: '#9ca3af'}} 
+                   />
+                ) : (
+                   <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
+                )}
                 
-                {/* 3. The Dots (Scatter) */}
-                <Scatter name="Flights" data={scatterData} fill="#8884d8" />
-              </ComposedChart>
-            ) : (
-              // Standard Bar Chart for KM / Time
-              <BarChart data={xAxisData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
-                <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
-                <Tooltip cursor={{fill: '#f3f4f6'}} />
-                <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            )}
+                <Tooltip cursor={{fill: '#f9fafb', opacity: 0.5}} content={<CustomTooltip />} />
+                
+                {/* GHOST BAR (The trick): 
+                   We draw a transparent bar for "flights" mode. 
+                   This forces the chart to render the 12 columns correctly. 
+                */}
+                <Bar 
+                    dataKey="placeholder" 
+                    barSize={graphMode === 'flights' ? 0 : undefined} 
+                    fill={graphMode === 'flights' ? 'transparent' : '#3b82f6'} 
+                    radius={[4, 4, 0, 0]}
+                />
+
+                {/* DOTS: Only render when in flight mode 
+                */}
+                {graphMode === 'flights' && (
+                    <Scatter name="Flights" data={scatterData} fill="#8884d8" />
+                )}
+
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
         
-        {/* LEGEND */}
         {graphMode === 'flights' && (
            <div className="flex justify-center gap-4 mt-4 text-xs font-semibold text-gray-500">
               <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500"></div> Local (ZA)</div>
@@ -238,17 +252,17 @@ function StatCard({ icon, label, value, sub, unit }: any) {
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
-    // Handle distinct tooltips for Bar vs Scatter
-    if (data.tooltip) {
-        // Scatter Tooltip
+    // Differentiate between Scatter (Dot) and Bar data
+    if (data.x) {
+        // SCATTER TOOLTIP
         return (
         <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
             <div className="font-bold">{data.tooltip}</div>
             <div className="opacity-75">{data.x}</div>
         </div>
         );
-    } else {
-        // Bar Tooltip
+    } else if (payload[0].value > 0) {
+        // BAR TOOLTIP
         return (
             <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
                 <div className="font-bold">{payload[0].value}</div>
