@@ -1,25 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
-// --- CONSTANTS ---
-// We move the manual map outside so it can be used by both the Saver and the Viewer
 const MANUAL_AIRLINE_MAP: Record<string, string> = { 
-    'SFR': 'FA', // FlySafair
-    'FA': 'FA',
-    'SAA': 'SA', // South African Airways
-    'SA': 'SA',
-    'LNK': '4Z', // Airlink
-    '4Z': '4Z',
-    'BAW': 'BA', // British Airways
-    'BA': 'BA',
-    'CAW': 'MN', // Comair (Historic)
-    'MN': 'MN',
-    'KUL': 'MN', // Kulula (Historic)
+    'SFR': 'FA', 'FA': 'FA', 'SAA': 'SA', 'SA': 'SA', 'LNK': '4Z', '4Z': '4Z', 'BAW': 'BA', 'BA': 'BA', 'CAW': 'MN', 'MN': 'MN', 'KUL': 'MN' 
 };
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -36,8 +24,13 @@ type Leg = {
   from: any; to: any; date: string; flightNumber: string; airline: string; distance: number | ''; duration: number | ''; showManual: boolean; error?: string;
 };
 
-export default function FlightsPage() {
-  const [view, setView] = useState<'list' | 'add'>('list');
+// We wrap the content in a Suspense boundary component because useSearchParams requires it in Next.js
+function FlightsContent() {
+  const searchParams = useSearchParams();
+  // If ?new=true exists in URL, default to 'add', otherwise 'list'
+  const initialView = searchParams.get('new') === 'true' ? 'add' : 'list';
+  
+  const [view, setView] = useState<'list' | 'add'>(initialView);
   const [flights, setFlights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -65,25 +58,29 @@ export default function FlightsPage() {
     if (data) setFlights(data);
   };
 
-  // --- LOGIC: FIND THE IATA CODE (e.g. "FA") ---
   const resolveAirlineCode = (flightCode: string) => {
     if (!flightCode || flightCode.length < 2) return null;
-    
-    // 1. Extract prefix (e.g. "SFR" from "SFR600")
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
     const prefix = match[1];
-
-    // 2. Check Manual Map (Fastest)
     if (MANUAL_AIRLINE_MAP[prefix]) return MANUAL_AIRLINE_MAP[prefix];
-
-    // 3. Check Database
     if (airlineList.length > 0) {
         const airline = airlineList.find((a: any) => a.icao === prefix || a.iata === prefix);
         if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) {
             return airline.iata;
         }
     }
+    return null;
+  };
+
+  const getAirlineLogoUrl = (flightCode: string, savedAirline: string | null) => {
+    // 1. If we have a saved airline in DB, use it immediately
+    if (savedAirline) return `https://pics.avs.io/200/200/${savedAirline}.png`;
+    
+    // 2. Fallback: Try to calculate it on the fly (for old entries)
+    const calculated = resolveAirlineCode(flightCode);
+    if (calculated) return `https://pics.avs.io/200/200/${calculated}.png`;
+    
     return null;
   };
 
@@ -143,9 +140,7 @@ export default function FlightsPage() {
              finalDistance = getDistanceKm(originObj.lat, originObj.lon, destObj.lat, destObj.lon);
              if (!finalDuration) finalDuration = Math.round((finalDistance / 800 * 60) + 30);
         }
-        
-        // --- NEW: RESOLVE AIRLINE CODE HERE ---
-        // We find the IATA code (e.g. "FA") now and save it to the DB forever.
+
         let resolvedAirline = leg.airline; 
         if (!resolvedAirline && leg.flightNumber) {
             const foundCode = resolveAirlineCode(leg.flightNumber);
@@ -153,15 +148,7 @@ export default function FlightsPage() {
         }
 
         if (!hasError) {
-            payload.push({ 
-                date: leg.date, 
-                origin: originObj?.iata || 'UNK', 
-                destination: destObj?.iata || 'UNK', 
-                airline: resolvedAirline || null, // Saved to DB!
-                flight_number: leg.flightNumber || null, 
-                distance_km: finalDistance || 0, 
-                duration_min: finalDuration || 0 
-            });
+            payload.push({ date: leg.date, origin: originObj?.iata || 'UNK', destination: destObj?.iata || 'UNK', airline: resolvedAirline || null, flight_number: leg.flightNumber || null, distance_km: finalDistance || 0, duration_min: finalDuration || 0 });
         }
     }
     setLegs(newLegs);
@@ -228,9 +215,9 @@ export default function FlightsPage() {
              const originName = originObj ? originObj.city : f.origin;
              const destName = destObj ? destObj.city : f.destination;
              
-             // OPTIMIZED: Use the saved airline code if available!
-             const airlineCode = f.airline || resolveAirlineCode(f.flight_number);
-             const logoUrl = airlineCode ? `https://pics.avs.io/200/200/${airlineCode}.png` : null;
+             // OPTIMIZED LOGO LOGIC
+             // We pass the saved 'airline' column first. If it's missing, we fallback to calculation.
+             const logoUrl = getAirlineLogoUrl(f.flight_number, f.airline);
 
              return (
                  <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
@@ -256,5 +243,14 @@ export default function FlightsPage() {
        </div>
        <style jsx>{` .fallback-icon img { display: none; } .fallback-icon .fallback-plane { display: block; } `}</style>
     </div>
+  );
+}
+
+// Ensure the component is exported as default at the very bottom
+export default function FlightsPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+      <FlightsContent />
+    </Suspense>
   );
 }

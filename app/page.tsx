@@ -27,7 +27,6 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // --- HELPER: LOCAL CHECK ---
   const isSouthAfrican = (code: string) => {
     const airport = airportDb.find((a: any) => a.iata === code || a.icao === code);
     if (airport) {
@@ -40,7 +39,6 @@ export default function Home() {
     return false;
   };
 
-  // --- STATS ---
   const currentYear = new Date().getFullYear();
   const ytdFlights = flights.filter(f => new Date(f.date).getFullYear() === currentYear);
 
@@ -53,23 +51,20 @@ export default function Home() {
     timeYTD: ytdFlights.reduce((a, c) => a + (c.duration_min || 0), 0),
   };
 
-  // --- GRAPH DATA ENGINE ---
   const getGraphData = () => {
     const today = new Date();
     const months = [];
     
-    // 1. Create 12-Month Skeleton
     for (let i = 11; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       months.push({
         name: d.toLocaleString('default', { month: 'short' }),
         key: `${d.getFullYear()}-${d.getMonth()}`,
         value: 0,
-        flightsDetail: [] as any[] // Store specific flight info here
+        flightsDetail: [] as any[]
       });
     }
 
-    // 2. Populate Data
     months.forEach((m) => {
       const monthFlights = flights.filter(f => {
         const fd = new Date(f.date);
@@ -77,7 +72,6 @@ export default function Home() {
       });
 
       if (graphMode === 'flights') {
-        // FLIGHTS: value = count, but we also save the details for the custom renderer
         m.value = monthFlights.length;
         m.flightsDetail = monthFlights.map(f => {
             const originIsZA = isSouthAfrican(f.origin);
@@ -89,7 +83,6 @@ export default function Home() {
             };
         });
       } else {
-        // KM or TIME
         if (graphMode === 'km') m.value = monthFlights.reduce((a, c) => a + (c.distance_km || 0), 0);
         if (graphMode === 'time') m.value = Math.floor(monthFlights.reduce((a, c) => a + (c.duration_min || 0), 0) / 60);
       }
@@ -100,23 +93,16 @@ export default function Home() {
 
   const graphData = getGraphData();
 
-  // --- CUSTOM DOT RENDERER (The "Stack of Dots" Trick) ---
   const CustomBar = (props: any) => {
     const { x, y, width, height, payload } = props;
-    
-    // If not in flights mode, or no flights, render STANDARD BAR (Red now)
     if (graphMode !== 'flights' || payload.value === 0) {
         return <path d={`M${x},${y + height} L${x + width},${y + height} L${x + width},${y} L${x},${y} Z`} fill="#FF2800" />;
     }
-
-    // Draw a circle for each flight in this month
     return (
       <g>
         {payload.flightsDetail.map((flight: any, index: number) => {
             const isLocal = flight.isLocal;
-            
-            const dotY = (y + height) - (index * 15) - 10; // 15px spacing
-            
+            const dotY = (y + height) - (index * 15) - 10;
             return (
                 <circle 
                     key={flight.id} 
@@ -133,19 +119,19 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24">
-      {/* HEADER - NEW STYLE */}
+      {/* HEADER */}
       <div className="flex justify-between items-center mb-8">
         <div>
            <h1 className="text-3xl font-black text-gray-900 uppercase tracking-tight leading-none">
              MARC&apos;S <br/> <span className="text-[#FF2800]">FLIGHT TRACKER</span>
            </h1>
         </div>
-        <Link href="/flights" className="bg-[#FF2800] text-white p-3 rounded-full shadow-lg shadow-[#FF2800]/20 hover:scale-105 transition-transform">
+        {/* UPDATED LINK: Now includes ?new=true */}
+        <Link href="/flights?new=true" className="bg-[#FF2800] text-white p-3 rounded-full shadow-lg shadow-[#FF2800]/20 hover:scale-105 transition-transform">
            <Plus size={24} />
         </Link>
       </div>
 
-      {/* STATS - RED ICONS */}
       <div className="grid grid-cols-2 gap-3 mb-6">
         <StatCard icon={<Plane size={18} className="text-[#FF2800]"/>} label="Flights" value={stats.count} sub={`${stats.countYTD} YTD`} />
         <StatCard icon={<Map size={18} className="text-[#FF2800]"/>} label="Distance" value={`${(stats.km/1000).toFixed(1)}k`} unit="km" sub={`${(stats.kmYTD/1000).toFixed(1)}k YTD`} />
@@ -153,7 +139,6 @@ export default function Home() {
         <StatCard icon={<Calendar size={18} className="text-[#FF2800]"/>} label="Avg Dist" value={stats.count > 0 ? Math.round(stats.km/stats.count) : 0} unit="km" sub="per flight" />
       </div>
 
-      {/* GRAPH CARD */}
       <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-bold text-gray-800 text-lg">Analytics</h2>
@@ -167,31 +152,13 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Set explicit height to prevent collapse */}
         <div style={{ width: '100%', height: '300px' }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={graphData} margin={{ top: 10, right: 0, bottom: 0, left: -20 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                
-                <XAxis 
-                    dataKey="name" 
-                    fontSize={10} 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#9ca3af'}} 
-                />
-
-                <YAxis 
-                    fontSize={10} 
-                    axisLine={false} 
-                    tickLine={false} 
-                    tick={{fill: '#9ca3af'}} 
-                    allowDecimals={graphMode !== 'flights'}
-                />
-                
+                <XAxis dataKey="name" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} />
+                <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#9ca3af'}} allowDecimals={graphMode !== 'flights'} />
                 <Tooltip cursor={{fill: '#f9fafb', opacity: 0.5}} content={<CustomTooltip mode={graphMode} />} />
-
-                {/* THE MAGIC BAR - RED FILL */}
                 <Bar 
                     dataKey="value" 
                     shape={graphMode === 'flights' ? <CustomBar /> : undefined}
@@ -211,7 +178,6 @@ export default function Home() {
         )}
       </div>
 
-      {/* FOOTER BUTTON */}
       <div className="fixed bottom-6 left-0 right-0 flex justify-center pointer-events-none">
          <Link href="/flights" className="bg-[#FF2800] text-white px-6 py-3 rounded-full shadow-xl shadow-[#FF2800]/30 font-bold text-sm pointer-events-auto flex items-center gap-2 hover:bg-red-600 transition-colors">
             View Flight Log <Plane size={16}/>
@@ -237,7 +203,6 @@ function StatCard({ icon, label, value, sub, unit }: any) {
 const CustomTooltip = ({ active, payload, mode }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
-    
     if (mode === 'flights' && data.flightsDetail && data.flightsDetail.length > 0) {
         return (
             <div className="bg-gray-900 text-white text-xs p-3 rounded shadow-xl z-50">
@@ -251,7 +216,6 @@ const CustomTooltip = ({ active, payload, mode }: any) => {
             </div>
         );
     }
-    
     return (
         <div className="bg-gray-900 text-white text-xs p-2 rounded shadow-xl z-50">
             <div className="font-bold text-[#FF2800] text-lg">{payload[0].value}</div>
