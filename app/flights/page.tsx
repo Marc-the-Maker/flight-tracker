@@ -25,8 +25,8 @@ type Leg = {
   airline: string;
   distance: number | ''; 
   duration: number | ''; 
-  showManual: boolean; // New toggle for hiding/showing details
-  error?: string; // To show specific errors per leg
+  showManual: boolean; 
+  error?: string;
 };
 
 export default function FlightsPage() {
@@ -100,10 +100,11 @@ export default function FlightsPage() {
 
         let finalDuration = Number(leg.duration);
         let finalDistance = Number(leg.distance);
-        let finalOrigin = leg.from?.iata;
-        let finalDest = leg.to?.iata;
+        
+        let originObj = leg.from;
+        let destObj = leg.to;
 
-        // 1. Try API Lookup if Flight Number exists
+        // 1. Try API Lookup
         if (leg.flightNumber && leg.flightNumber.length > 2) {
             setLoadingMessage(`Looking up ${leg.flightNumber}...`);
             try {
@@ -111,55 +112,56 @@ export default function FlightsPage() {
                 const apiData = await res.json();
 
                 if (!apiData.error) {
-                    if (!finalOrigin) finalOrigin = apiData.origin;
-                    if (!finalDest) finalDest = apiData.destination;
-                    if (apiData.actual_duration || apiData.duration) {
-                        finalDuration = apiData.actual_duration || apiData.duration;
+                    // FIX: Prefer scheduled duration
+                    if (apiData.duration) finalDuration = apiData.duration;
+
+                    // FIX: Convert API ICAO codes (FACT) to IATA Objects (CPT)
+                    if (!originObj) {
+                        originObj = airportList.find((a: any) => a.icao === apiData.origin || a.iata === apiData.origin);
                     }
-                    // Success! Clear any errors
+                    if (!destObj) {
+                        destObj = airportList.find((a: any) => a.icao === apiData.destination || a.iata === apiData.destination);
+                    }
+
                     leg.error = undefined;
                 } else {
-                   // API Failed (Flight not found)
-                   if (!finalOrigin || !finalDest) {
+                   // Not found logic
+                   if (!originObj || !destObj) {
                        leg.error = "Flight not found. Please enter airports manually.";
-                       leg.showManual = true; // FORCE OPEN MANUAL ENTRY
+                       leg.showManual = true;
                        hasError = true;
                    }
                 }
             } catch (err) {
-                if (!finalOrigin || !finalDest) {
+                if (!originObj || !destObj) {
                     leg.error = "Network error. Enter manually.";
                     leg.showManual = true;
                     hasError = true;
                 }
             }
         } else {
-            // No flight number? Check if manual entry is complete
-            if (!finalOrigin || !finalDest) {
+            // No flight number logic
+            if (!originObj || !destObj) {
                 leg.error = "Please enter flight number OR airports";
                 hasError = true;
             }
         }
 
-        // 2. Math Fallback for Distance
-        if (!finalDistance && finalOrigin && finalDest) {
-             const originObj = airportList.find(a => a.iata === finalOrigin);
-             const destObj = airportList.find(a => a.iata === finalDest);
-             if (originObj && destObj) {
-                 finalDistance = getDistanceKm(originObj.lat, originObj.lon, destObj.lat, destObj.lon);
+        // FIX: Calculate Distance using the objects we just found
+        if (!finalDistance && originObj && destObj) {
+             finalDistance = getDistanceKm(originObj.lat, originObj.lon, destObj.lat, destObj.lon);
+             
+             // Fallback duration calculation
+             if (!finalDuration) {
+                 finalDuration = Math.round((finalDistance / 800 * 60) + 30);
              }
-        }
-        
-        // 3. Math Fallback for Duration
-        if (!finalDuration && finalDistance) {
-            finalDuration = Math.round((finalDistance / 800 * 60) + 30);
         }
 
         if (!hasError) {
             payload.push({
                 date: leg.date,
-                origin: finalOrigin || 'UNK',
-                destination: finalDest || 'UNK',
+                origin: originObj?.iata || 'UNK',
+                destination: destObj?.iata || 'UNK',
                 airline: leg.airline || null,
                 flight_number: leg.flightNumber || null,
                 distance_km: finalDistance || 0,
@@ -168,11 +170,11 @@ export default function FlightsPage() {
         }
     }
 
-    setLegs(newLegs); // Update state to show errors/open forms if needed
+    setLegs(newLegs);
 
     if (hasError) {
         setLoading(false);
-        return; // Stop here, let user fix it
+        return;
     }
 
     setLoadingMessage('Saving...');
@@ -183,7 +185,6 @@ export default function FlightsPage() {
     } else {
         setView('list');
         fetchHistory();
-        // Reset form
         setLegs([{ from: null, to: null, date: new Date().toISOString().split('T')[0], flightNumber: '', airline: '', distance: '', duration: '', showManual: false }]);
     }
     setLoading(false);
@@ -212,7 +213,6 @@ export default function FlightsPage() {
                  {leg.error && <div className="text-xs text-red-500 flex items-center gap-1"><AlertCircle size={12}/> {leg.error}</div>}
               </div>
 
-              {/* MAIN INPUTS: FLIGHT NO & DATE */}
               <div className="grid grid-cols-2 gap-4 mb-2">
                   <div>
                       <label className="text-[10px] text-gray-400 font-bold uppercase">Flight No.</label>
@@ -229,7 +229,6 @@ export default function FlightsPage() {
                   </div>
               </div>
 
-              {/* TOGGLE FOR DETAILS */}
               <button 
                 onClick={() => {const n=[...legs]; n[i].showManual = !n[i].showManual; setLegs(n)}}
                 className="text-xs text-blue-500 font-semibold flex items-center gap-1 mt-2 mb-2"
@@ -238,7 +237,6 @@ export default function FlightsPage() {
                 {leg.showManual ? 'Hide Details' : 'Manual Entry / Details'}
               </button>
 
-              {/* HIDDEN DETAILS SECTION */}
               {leg.showManual && (
                   <div className="mt-3 pt-3 border-t border-gray-100 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="grid grid-cols-2 gap-4">
@@ -274,7 +272,6 @@ export default function FlightsPage() {
                         </div>
                       </div>
                       
-                      {/* STATS */}
                       <div className="grid grid-cols-2 gap-4">
                         <div className="relative">
                             <input type="number" placeholder="Dist" value={leg.distance} onChange={e => {const n=[...legs]; n[i].distance=Number(e.target.value); setLegs(n)}} className="w-full p-2 bg-gray-50 rounded border border-gray-200 text-sm" />
@@ -315,24 +312,34 @@ export default function FlightsPage() {
        </div>
        <button onClick={() => setView('add')} className="w-full bg-blue-600 text-white p-4 rounded-xl mb-6 font-bold shadow-lg shadow-blue-200 flex items-center justify-center gap-2"><Plus size={20}/> Log New Trip</button>
        <div className="space-y-4">
-          {flights.map(f => (
-             <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
-                <div className="flex items-center gap-4">
-                   <div className="bg-blue-50 p-3 rounded-full text-blue-600"><Plane size={20}/></div>
-                   <div>
-                      <div className="text-lg font-bold text-gray-900">{f.origin} ➝ {f.destination}</div>
-                      <div className="text-xs text-gray-500 flex gap-2">
-                          <span>{new Date(f.date).toLocaleDateString()}</span>
-                          <span className="font-bold text-blue-500">{f.flight_number}</span>
-                      </div>
-                   </div>
-                </div>
-                <div className="text-right">
-                   <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
-                   <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
-                </div>
-             </div>
-          ))}
+          {flights.map(f => {
+             // FIX: Look up city names from the list
+             const originObj = airportList.find(a => a.iata === f.origin);
+             const destObj = airportList.find(a => a.iata === f.destination);
+             const originName = originObj ? originObj.city : f.origin;
+             const destName = destObj ? destObj.city : f.destination;
+
+             return (
+                 <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                       <div className="bg-blue-50 p-3 rounded-full text-blue-600"><Plane size={20}/></div>
+                       <div>
+                          <div className="text-lg font-bold text-gray-900">
+                             {originName} <span className="text-gray-400">➝</span> {destName}
+                          </div>
+                          <div className="text-xs text-gray-500 flex gap-2">
+                              <span>{new Date(f.date).toLocaleDateString()}</span>
+                              <span className="font-bold text-blue-500">{f.flight_number}</span>
+                          </div>
+                       </div>
+                    </div>
+                    <div className="text-right">
+                       <div className="text-sm font-bold text-gray-900">{f.distance_km}km</div>
+                       <div className="text-xs text-gray-400">{Math.floor(f.duration_min/60)}h {f.duration_min%60}m</div>
+                    </div>
+                 </div>
+             );
+          })}
        </div>
     </div>
   );

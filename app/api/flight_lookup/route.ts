@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server';
 
-// Helper to fetch and find the ICAO code
+// Helper to find the ICAO code (e.g. converts "FA" -> "SFR")
 async function getIcaoCode(iata: string) {
   try {
-    // We use a free, public list of airline codes
     const res = await fetch('https://raw.githubusercontent.com/nprail/airline-codes/master/airlines.json');
     if (!res.ok) return null;
     
     const airlines = await res.json();
-    // Find the airline where "iata" matches our input (e.g., "FA")
-    // active: "Y" ensures we don't pick a defunct airline
+    // Find the airline where "iata" matches our input
     const airline = airlines.find((a: any) => a.iata === iata && a.active === "Y");
     
     return airline ? airline.icao : null;
@@ -39,15 +37,11 @@ export async function GET(request: Request) {
       const iataCode = match[1]; // "FA"
       const flightNum = match[2]; // "600"
       
-      console.log(`⚠️ [API] Detected IATA code: ${iataCode}. Attempting convert...`);
-      
       const icaoCode = await getIcaoCode(iataCode); // Returns "SFR"
       
       if (icaoCode) {
         ident = `${icaoCode}${flightNum}`; // Becomes "SFR600"
         console.log(`✨ [API] Converted to ICAO: ${ident}`);
-      } else {
-        console.log(`❌ [API] Could not find ICAO for ${iataCode}, sticking with original.`);
       }
     }
 
@@ -59,7 +53,6 @@ export async function GET(request: Request) {
     });
 
     if (!res.ok) {
-        console.error(`❌ [API] Provider Error: ${res.status}`);
         return NextResponse.json({ error: 'Provider Error' }, { status: res.status });
     }
 
@@ -67,7 +60,6 @@ export async function GET(request: Request) {
     const flights = data.flights;
 
     if (!flights || flights.length === 0) {
-      console.log(`❌ [API] Still 0 flights found for ${ident}`);
       return NextResponse.json({ error: 'Flight not found' }, { status: 404 });
     }
 
@@ -75,8 +67,9 @@ export async function GET(request: Request) {
     const lastFlight = flights.find((f: any) => f.actual_off) || flights[0];
 
     const payload = {
-      origin: lastFlight.origin.code,
-      destination: lastFlight.destination.code,
+      origin: lastFlight.origin.code,      // Likely ICAO (e.g. FACT)
+      destination: lastFlight.destination.code, // Likely ICAO (e.g. FAOR)
+      // Use filed duration as the primary source of truth
       duration: lastFlight.filed_ete ? Math.round(lastFlight.filed_ete / 60) : 0,
       actual_duration: (lastFlight.actual_on && lastFlight.actual_off) 
         ? Math.round((new Date(lastFlight.actual_on).getTime() - new Date(lastFlight.actual_off).getTime()) / 60000)
@@ -84,7 +77,6 @@ export async function GET(request: Request) {
       departure_date: lastFlight.scheduled_off.split('T')[0]
     };
     
-    console.log("✅ [API] Success:", payload);
     return NextResponse.json(payload);
 
   } catch (error) {
