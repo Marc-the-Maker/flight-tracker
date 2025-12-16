@@ -39,9 +39,8 @@ function FlightsContent() {
   
   // FILTERS STATE
   const [showFilters, setShowFilters] = useState(false);
-  const [filterYear, setFilterYear] = useState('All');
-  const [filterMonth, setFilterMonth] = useState('All');
-  const [filterType, setFilterType] = useState('All'); // All, Local, International
+  const [filterPeriod, setFilterPeriod] = useState('All'); // NEW: Period Filter
+  const [filterType, setFilterType] = useState('All'); 
   const [filterAirline, setFilterAirline] = useState('All');
 
   const [legs, setLegs] = useState<Leg[]>([
@@ -63,8 +62,6 @@ function FlightsContent() {
     if (data) setFlights(data);
   };
 
-  // --- HELPER: CHECK IF AIRPORT IS SOUTH AFRICAN ---
-  // (Used for both saving new flights and filtering old ones)
   const isSouthAfrican = (code: string) => {
     const airport = airportList.find((a: any) => a.iata === code || a.icao === code);
     if (airport) {
@@ -99,6 +96,13 @@ function FlightsContent() {
     return null;
   };
 
+  // --- HELPER: GET AIRLINE NAME FROM CODE ---
+  const getAirlineName = (code: string) => {
+      if (!code) return "Unknown";
+      const airline = airlineList.find((a: any) => a.iata === code || a.icao === code);
+      return airline ? airline.name : code; // Return Name if found, else Code
+  };
+
   const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
     setActiveSearch({ i, f });
     if (query.length > 1) {
@@ -130,8 +134,6 @@ function FlightsContent() {
     for (let i = 0; i < newLegs.length; i++) {
         const leg = newLegs[i];
         if (!leg.flightNumber && !leg.from) continue;
-        
-        // Auto-sanitize
         if (leg.flightNumber) leg.flightNumber = leg.flightNumber.replace(/\s/g, '');
 
         let finalDuration = Number(leg.duration);
@@ -166,7 +168,6 @@ function FlightsContent() {
             if (foundCode) resolvedAirline = foundCode;
         }
 
-        // --- CALCULATE LOCAL VS INTERNATIONAL ---
         const isLocal = (originObj && destObj) 
             ? (isSouthAfrican(originObj.iata) && isSouthAfrican(destObj.iata))
             : false;
@@ -180,7 +181,7 @@ function FlightsContent() {
                 flight_number: leg.flightNumber || null, 
                 distance_km: finalDistance || 0, 
                 duration_min: finalDuration || 0,
-                is_local: isLocal // Save to new column
+                is_local: isLocal 
             });
         }
     }
@@ -194,22 +195,32 @@ function FlightsContent() {
   };
 
   // --- FILTER LOGIC ---
-  const uniqueYears = Array.from(new Set(flights.map(f => new Date(f.date).getFullYear().toString()))).sort().reverse();
   const uniqueAirlines = Array.from(new Set(flights.map(f => f.airline || resolveAirlineCode(f.flight_number)))).filter(Boolean).sort();
   
   const filteredFlights = flights.filter(f => {
       const d = new Date(f.date);
-      // Date Filters
-      if (filterYear !== 'All' && d.getFullYear().toString() !== filterYear) return false;
-      if (filterMonth !== 'All' && d.toLocaleString('default', { month: 'long' }) !== filterMonth) return false;
+      const now = new Date();
       
-      // Airline Filter
+      // PERIOD FILTER
+      if (filterPeriod === 'Last 30 Days') {
+          const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(now.getDate() - 30);
+          if (d < thirtyDaysAgo) return false;
+      }
+      if (filterPeriod === 'Last Year') {
+          const oneYearAgo = new Date(); oneYearAgo.setFullYear(now.getFullYear() - 1);
+          if (d < oneYearAgo) return false;
+      }
+      if (filterPeriod === 'Last 5 Years') {
+          const fiveYearsAgo = new Date(); fiveYearsAgo.setFullYear(now.getFullYear() - 5);
+          if (d < fiveYearsAgo) return false;
+      }
+      
+      // AIRLINE FILTER
       const code = f.airline || resolveAirlineCode(f.flight_number);
       if (filterAirline !== 'All' && code !== filterAirline) return false;
 
-      // Type Filter (Smart Fallback for old data)
+      // TYPE FILTER
       if (filterType !== 'All') {
-          // If 'is_local' exists in DB, use it. If null, calculate it on the fly using helper.
           const isLocal = f.is_local !== null ? f.is_local : (isSouthAfrican(f.origin) && isSouthAfrican(f.destination));
           if (filterType === 'Local' && !isLocal) return false;
           if (filterType === 'International' && isLocal) return false;
@@ -219,6 +230,7 @@ function FlightsContent() {
   });
 
   if (view === 'add') {
+    // ... (Keep existing ADD VIEW code exactly as is) ...
     return (
       <div className="min-h-screen bg-gray-50 p-4">
         <h2 className="text-2xl font-black mb-6 text-gray-900 uppercase tracking-tight">Add Trip</h2>
@@ -278,22 +290,15 @@ function FlightsContent() {
                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm space-y-3 animate-in fade-in slide-in-from-top-2">
                    <div className="grid grid-cols-2 gap-3">
                        <div>
-                           <label className="text-[10px] font-bold text-gray-400 uppercase">Year</label>
-                           <select value={filterYear} onChange={e => setFilterYear(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
-                               <option value="All">All Years</option>
-                               {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                           <label className="text-[10px] font-bold text-gray-400 uppercase">Period</label>
+                           <select value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                               <option value="All">All Time</option>
+                               <option value="Last 30 Days">Last 30 Days</option>
+                               <option value="Last Year">Last Year</option>
+                               <option value="Last 5 Years">Last 5 Years</option>
                            </select>
                        </div>
                        <div>
-                           <label className="text-[10px] font-bold text-gray-400 uppercase">Month</label>
-                           <select value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
-                               <option value="All">All Months</option>
-                               {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => <option key={m} value={m}>{m}</option>)}
-                           </select>
-                       </div>
-                   </div>
-                   <div className="grid grid-cols-2 gap-3">
-                        <div>
                            <label className="text-[10px] font-bold text-gray-400 uppercase">Type</label>
                            <select value={filterType} onChange={e => setFilterType(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
                                <option value="All">All Flights</option>
@@ -301,16 +306,21 @@ function FlightsContent() {
                                <option value="International">International</option>
                            </select>
                         </div>
-                        <div>
-                           <label className="text-[10px] font-bold text-gray-400 uppercase">Airline</label>
-                           <select value={filterAirline} onChange={e => setFilterAirline(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
-                               <option value="All">All Airlines</option>
-                               {uniqueAirlines.map(a => <option key={a} value={a}>{a}</option>)}
-                           </select>
-                        </div>
                    </div>
-                   {(filterYear !== 'All' || filterMonth !== 'All' || filterType !== 'All' || filterAirline !== 'All') && (
-                       <button onClick={() => { setFilterYear('All'); setFilterMonth('All'); setFilterType('All'); setFilterAirline('All'); }} className="w-full py-2 text-xs font-bold text-red-400 hover:text-red-600 flex items-center justify-center gap-1">
+                   
+                   <div>
+                       <label className="text-[10px] font-bold text-gray-400 uppercase">Airline</label>
+                       <select value={filterAirline} onChange={e => setFilterAirline(e.target.value)} className="w-full p-2 bg-gray-50 rounded text-sm font-bold text-gray-700 outline-none focus:ring-1 focus:ring-[#FF2800]">
+                           <option value="All">All Airlines</option>
+                           {/* Show Full Names in Dropdown */}
+                           {uniqueAirlines.map(code => (
+                               <option key={code} value={code}>{getAirlineName(code)}</option>
+                           ))}
+                       </select>
+                   </div>
+
+                   {(filterPeriod !== 'All' || filterType !== 'All' || filterAirline !== 'All') && (
+                       <button onClick={() => { setFilterPeriod('All'); setFilterType('All'); setFilterAirline('All'); }} className="w-full py-2 text-xs font-bold text-red-400 hover:text-red-600 flex items-center justify-center gap-1">
                            <X size={12}/> Clear Filters
                        </button>
                    )}
@@ -332,11 +342,12 @@ function FlightsContent() {
                  return (
                      <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
                         <div className="flex items-center gap-4">
-                           <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                           {/* BIGGER LOGO CONTAINER (w-14 h-14) */}
+                           <div className="w-14 h-14 rounded-full bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
                                {logoUrl ? (
-                                   <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
-                               ) : ( <Plane size={20} className="text-[#FF2800]"/> )}
-                               <Plane size={20} className="text-[#FF2800] hidden fallback-plane"/>
+                                   <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-2" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('fallback-icon'); }} />
+                               ) : ( <Plane size={24} className="text-[#FF2800]"/> )}
+                               <Plane size={24} className="text-[#FF2800] hidden fallback-plane"/>
                            </div>
                            <div>
                               <div className="text-lg font-bold text-gray-900 leading-tight">{originName} <span className="text-gray-300">➝</span> {destName}</div>
