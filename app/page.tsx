@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
-// --- MATH HELPERS ---
+// ... (keep getDistanceKm function unchanged) ...
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -16,6 +17,7 @@ function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return Math.round(R * c);
 }
 
+// ... (keep Leg type unchanged) ...
 type Leg = {
   from: any;
   to: any;
@@ -34,9 +36,8 @@ export default function FlightsPage() {
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   
-  // Data Sources
   const [airportList, setAirportList] = useState<any[]>([]);
-  const [airlineList, setAirlineList] = useState<any[]>([]); // NEW: Airline DB
+  const [airlineList, setAirlineList] = useState<any[]>([]); 
 
   const [tripType, setTripType] = useState<'one-way' | 'return' | 'multi'>('return');
   const [legs, setLegs] = useState<Leg[]>([
@@ -49,15 +50,18 @@ export default function FlightsPage() {
 
   useEffect(() => {
     fetchHistory();
+    
     // 1. Fetch Airports
     fetch('https://raw.githubusercontent.com/mwgg/Airports/master/airports.json')
-      .then(res => res.json())
-      .then(data => setAirportList(Object.values(data)));
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setAirportList(Object.values(data)))
+      .catch(e => console.error("Airport load failed", e));
     
-    // 2. Fetch Airlines (for Logo Lookup)
-    fetch('https://raw.githubusercontent.com/nprail/airline-codes/master/airlines.json')
-      .then(res => res.json())
-      .then(data => setAirlineList(data));
+    // 2. Fetch Airlines (UPDATED URL HERE)
+    fetch('https://raw.githubusercontent.com/besrourms/airlines/master/airlines.json')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setAirlineList(data))
+      .catch(e => console.error("Airline load failed", e));
   }, []);
 
   const fetchHistory = async () => {
@@ -65,11 +69,10 @@ export default function FlightsPage() {
     if (data) setFlights(data);
   };
 
-  // --- LOGO HELPER ---
   const getAirlineLogoUrl = (flightCode: string) => {
     if (!flightCode || flightCode.length < 3) return null;
     
-    // Extract letters (e.g., "SFR" from "SFR600")
+    // Regex to get the first letters (e.g. "SFR" from "SFR600")
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
     const airlineCode = match[1];
@@ -77,14 +80,17 @@ export default function FlightsPage() {
     // Find airline in DB
     const airline = airlineList.find((a: any) => a.icao === airlineCode || a.iata === airlineCode);
     
-    // Return logo URL using IATA code (e.g. "FA") if found, defaulting to generic service
-    if (airline && airline.iata) {
+    if (airline && airline.iata && airline.iata !== '-') {
         return `https://pics.avs.io/200/200/${airline.iata}.png`;
     }
     return null;
   };
 
-  // --- SEARCH & SAVE LOGIC (Keep exactly as before) ---
+  // ... (keep handleSearch, selectAirport, saveTrip unchanged) ...
+  // Paste the previous logic for these functions here. 
+  // If you need the full code block for these again, let me know, 
+  // but simpler to just swap the URL in the useEffect above!
+
   const handleSearch = (i: number, f: 'from' | 'to', query: string) => {
     setActiveSearch({ i, f });
     if (query.length > 1) {
@@ -180,7 +186,6 @@ export default function FlightsPage() {
   };
 
   if (view === 'add') {
-    // ... ADD FLIGHT FORM (Keep exactly the same as previous) ...
     return (
       <div className="min-h-screen bg-gray-50 p-4">
         <h2 className="text-2xl font-bold mb-6 text-gray-900">Add Trip</h2>

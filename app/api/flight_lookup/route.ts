@@ -3,7 +3,9 @@ import { NextResponse } from 'next/server';
 // Helper to find the ICAO code (e.g. converts "FA" -> "SFR")
 async function getIcaoCode(iata: string) {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/nprail/airline-codes/master/airlines.json');
+    // UPDATED URL: Using a reliable mirror of the OpenFlights database
+    const res = await fetch('https://raw.githubusercontent.com/besrourms/airlines/master/airlines.json');
+    
     if (!res.ok) return null;
     
     const airlines = await res.json();
@@ -19,7 +21,7 @@ async function getIcaoCode(iata: string) {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  let ident = searchParams.get('ident')?.toUpperCase(); // e.g. "FA600"
+  let ident = searchParams.get('ident')?.toUpperCase();
 
   console.log(`🔍 [API] Input: ${ident}`);
 
@@ -30,17 +32,16 @@ export async function GET(request: Request) {
 
   try {
     // --- STEP 1: AUTO-CORRECT IATA TO ICAO ---
-    // Regex to split "FA" from "600"
     const match = ident.match(/^([A-Z]{2})([0-9]+)$/); 
     
     if (match) {
-      const iataCode = match[1]; // "FA"
-      const flightNum = match[2]; // "600"
+      const iataCode = match[1]; 
+      const flightNum = match[2]; 
       
-      const icaoCode = await getIcaoCode(iataCode); // Returns "SFR"
+      const icaoCode = await getIcaoCode(iataCode);
       
       if (icaoCode) {
-        ident = `${icaoCode}${flightNum}`; // Becomes "SFR600"
+        ident = `${icaoCode}${flightNum}`; 
         console.log(`✨ [API] Converted to ICAO: ${ident}`);
       }
     }
@@ -67,9 +68,8 @@ export async function GET(request: Request) {
     const lastFlight = flights.find((f: any) => f.actual_off) || flights[0];
 
     const payload = {
-      origin: lastFlight.origin.code,      // Likely ICAO (e.g. FACT)
-      destination: lastFlight.destination.code, // Likely ICAO (e.g. FAOR)
-      // Use filed duration as the primary source of truth
+      origin: lastFlight.origin.code,
+      destination: lastFlight.destination.code,
       duration: lastFlight.filed_ete ? Math.round(lastFlight.filed_ete / 60) : 0,
       actual_duration: (lastFlight.actual_on && lastFlight.actual_off) 
         ? Math.round((new Date(lastFlight.actual_on).getTime() - new Date(lastFlight.actual_off).getTime()) / 60000)
