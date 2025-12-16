@@ -6,6 +6,22 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Plus, ArrowLeft, Trash2, Loader2, Plane, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
 
+// --- CONSTANTS ---
+// We move the manual map outside so it can be used by both the Saver and the Viewer
+const MANUAL_AIRLINE_MAP: Record<string, string> = { 
+    'SFR': 'FA', // FlySafair
+    'FA': 'FA',
+    'SAA': 'SA', // South African Airways
+    'SA': 'SA',
+    'LNK': '4Z', // Airlink
+    '4Z': '4Z',
+    'BAW': 'BA', // British Airways
+    'BA': 'BA',
+    'CAW': 'MN', // Comair (Historic)
+    'MN': 'MN',
+    'KUL': 'MN', // Kulula (Historic)
+};
+
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371; 
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -49,16 +65,24 @@ export default function FlightsPage() {
     if (data) setFlights(data);
   };
 
-  const getAirlineLogoUrl = (flightCode: string) => {
-    if (!flightCode || flightCode.length < 3) return null;
+  // --- LOGIC: FIND THE IATA CODE (e.g. "FA") ---
+  const resolveAirlineCode = (flightCode: string) => {
+    if (!flightCode || flightCode.length < 2) return null;
+    
+    // 1. Extract prefix (e.g. "SFR" from "SFR600")
     const match = flightCode.match(/^([A-Z]+)/);
     if (!match) return null;
-    const code = match[1];
-    const manualMap: Record<string, string> = { 'SFR': 'FA', 'FA': 'FA', 'SAA': 'SA', 'SA': 'SA', 'LNK': '4Z', '4Z': '4Z', 'BAW': 'BA', 'BA': 'BA' };
-    if (manualMap[code]) return `https://pics.avs.io/200/200/${manualMap[code]}.png`;
+    const prefix = match[1];
+
+    // 2. Check Manual Map (Fastest)
+    if (MANUAL_AIRLINE_MAP[prefix]) return MANUAL_AIRLINE_MAP[prefix];
+
+    // 3. Check Database
     if (airlineList.length > 0) {
-        const airline = airlineList.find((a: any) => a.icao === code || a.iata === code);
-        if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) return `https://pics.avs.io/200/200/${airline.iata}.png`;
+        const airline = airlineList.find((a: any) => a.icao === prefix || a.iata === prefix);
+        if (airline && airline.iata && airline.iata !== '-' && airline.iata.length === 2) {
+            return airline.iata;
+        }
     }
     return null;
   };
@@ -119,8 +143,25 @@ export default function FlightsPage() {
              finalDistance = getDistanceKm(originObj.lat, originObj.lon, destObj.lat, destObj.lon);
              if (!finalDuration) finalDuration = Math.round((finalDistance / 800 * 60) + 30);
         }
+        
+        // --- NEW: RESOLVE AIRLINE CODE HERE ---
+        // We find the IATA code (e.g. "FA") now and save it to the DB forever.
+        let resolvedAirline = leg.airline; 
+        if (!resolvedAirline && leg.flightNumber) {
+            const foundCode = resolveAirlineCode(leg.flightNumber);
+            if (foundCode) resolvedAirline = foundCode;
+        }
+
         if (!hasError) {
-            payload.push({ date: leg.date, origin: originObj?.iata || 'UNK', destination: destObj?.iata || 'UNK', airline: leg.airline || null, flight_number: leg.flightNumber || null, distance_km: finalDistance || 0, duration_min: finalDuration || 0 });
+            payload.push({ 
+                date: leg.date, 
+                origin: originObj?.iata || 'UNK', 
+                destination: destObj?.iata || 'UNK', 
+                airline: resolvedAirline || null, // Saved to DB!
+                flight_number: leg.flightNumber || null, 
+                distance_km: finalDistance || 0, 
+                duration_min: finalDuration || 0 
+            });
         }
     }
     setLegs(newLegs);
@@ -186,7 +227,10 @@ export default function FlightsPage() {
              const destObj = airportList.find(a => a.iata === f.destination);
              const originName = originObj ? originObj.city : f.origin;
              const destName = destObj ? destObj.city : f.destination;
-             const logoUrl = getAirlineLogoUrl(f.flight_number);
+             
+             // OPTIMIZED: Use the saved airline code if available!
+             const airlineCode = f.airline || resolveAirlineCode(f.flight_number);
+             const logoUrl = airlineCode ? `https://pics.avs.io/200/200/${airlineCode}.png` : null;
 
              return (
                  <div key={f.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition-shadow">
